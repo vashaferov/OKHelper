@@ -1,5 +1,6 @@
 """NavMixin: дерево, статус-бар, watcher основной директории."""
 
+import time
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -104,15 +105,57 @@ class NavMixin:
 
     # ---------- click handlers ----------
     def _click_row(self, path: Path):
-        """Клик по строке дерева."""
+        """Клик по строке дерева.
+
+        Поведение:
+          • папка    — раскрыть / свернуть (как в файловых менеджерах);
+          • файл     — выделить;
+          • двойной клик по файлу — открыть модалку переименования,
+            аналог F7. Двойной клик определяется по времени между
+            двумя нажатиями (DOUBLE_CLICK_INTERVAL) на одном и том
+            же пути.
+        """
         def handler(event: MouseEvent):
             if event.event_type != MouseEventType.MOUSE_UP:
                 return
             if self.modal is not None:
                 return
+
+            # --- определяем двойной клик ---
+            now = time.monotonic()
+            is_double = (
+                self._last_click_path == path
+                and (now - self._last_click_time) <= self.DOUBLE_CLICK_INTERVAL
+            )
+            self._last_click_path = path
+            self._last_click_time = now
+
             self.tree.select_by_path(path)
+
             if path.is_dir():
+                # для папок двойной клик == одиночному (раскрыть/свернуть);
+                # дополнительно сбрасываем состояние, чтобы следующий клик
+                # не считался «третьим» подряд
                 self.tree.toggle()
+                self._last_click_path = None
+                self._last_click_time = 0.0
+                self._sync_path_to_selection()
+                self.app.layout.focus(self.tree_window)
+                self.app.invalidate()
+                return
+
+            # --- файл ---
+            if is_double:
+                # Сбрасываем счётчик, чтобы «третий» клик не открыл
+                # модалку повторно сразу после её закрытия.
+                self._last_click_path = None
+                self._last_click_time = 0.0
+                self.app.layout.focus(self.tree_window)
+                self._sync_path_to_selection()
+                self.open_edit_for_selection()
+                return
+
+            # одиночный клик — обычное выделение
             self._sync_path_to_selection()
             self.app.layout.focus(self.tree_window)
             self.app.invalidate()
@@ -174,8 +217,6 @@ class NavMixin:
             frags.append((style, f'{indent}  {path.name}',
                           self._click_row(path)))
 
-            # [⇪] — только для файлов, прошедших общую валидацию.
-            # info из кэша FileTree — не пересчитываем повторно.
             if is_uploadable(path, info):
                 frags.append(('', '  '))
                 frags.append(('class:btn.ftp', '[⇪]',
