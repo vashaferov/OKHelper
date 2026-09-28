@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────
+  # 1. Тесты: pytest на Linux и Windows, Python 3.11 и 3.12
+  # ──────────────────────────────────────────────────────────────
+  test:
+    name: Тесты (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Настройка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Кэш pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Запуск тестов
+        run: python -m pytest -v
+
+  # ──────────────────────────────────────────────────────────────
+  # 2. Сборка портативной версии для Windows (PyInstaller --onefile)
+  #    Запускается только после успешных тестов.
+  # ──────────────────────────────────────────────────────────────
+  build:
+    name: Сборка (Windows)
+    needs: test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Настройка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Сборка onefile-бинарника
+        run: pyinstaller --onefile --console --name ok-helper-tui main.py
+
+      - name: Проверка, что бинарник существует
+        shell: bash
+        run: |
+          ls -la dist/
+          test -f "dist/ok-helper-tui.exe"
+
+      - name: Загрузка артефакта
+        uses: actions/upload-artifact@v4
+        with:
+          name: ok-helper-tui-windows
+          path: dist/ok-helper-tui.exe
+          if-no-files-found: error
+          retention-days: 30
