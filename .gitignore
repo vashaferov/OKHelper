@@ -47,3 +47,4 @@ config.toml
 
 executor.py
 task.md
+.executor_backups
