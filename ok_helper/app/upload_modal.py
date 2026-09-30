@@ -15,6 +15,7 @@ from ..analyzer import human_size
 from ..ftp import (
     find_target_folder, is_uploadable, upload_extensions_hint,
     upload_reason_for, upload_file, validate_folder_name,
+    validate_upload_target,
 )
 from ..translit import transliterate
 
@@ -141,9 +142,6 @@ class UploadMixin:
             self.log(f'[FTP] Не файл: {path.name}')
             return
 
-        # --- общая валидация + FTP-политика ---
-        # info берём из кэша FileTree — та же проверка, что уже
-        # отрисована в дереве, чтобы поведение было консистентным.
         info = self.tree.info(path)
         if not is_uploadable(path, info):
             reason = upload_reason_for(path, info)
@@ -182,7 +180,8 @@ class UploadMixin:
         self._upload_target = None
         self._upload_status = ('', '')
         self.modal = None
-        self.app.layout.focus(self.tree_window)
+        # Возвращаем фокус в активную панель текущей вкладки.
+        self._focus_main_panel()
         self.invalidate()
 
     # ---------- upload ----------
@@ -191,18 +190,32 @@ class UploadMixin:
             self._close_upload_modal()
             return
 
-        # Перепроверяем валидацию — на случай, если файл
-        # переименовали между открытием модалки и Enter.
         if not is_uploadable(self._upload_target):
+            reason = upload_reason_for(self._upload_target)
             self._upload_status = (
                 'class:status.err',
-                f'  Недопустимый файл; разрешены {upload_extensions_hint()}',
+                f'  {reason}',
             )
             self.invalidate()
             return
 
         name = self.upload_name_input.text.strip()
+        if not name:
+            self._upload_status = (
+                'class:status.err',
+                '  Папка назначения обязательна (залить в корень нельзя)',
+            )
+            self.invalidate()
+            return
+
         ok, reason = validate_folder_name(name)
+        if not ok:
+            self._upload_status = ('class:status.err', f'  {reason}')
+            self.invalidate()
+            return
+
+        base = self.config.get('ftp_path', '/') or '/'
+        ok, reason = validate_upload_target(base, name)
         if not ok:
             self._upload_status = ('class:status.err', f'  {reason}')
             self.invalidate()
@@ -213,7 +226,6 @@ class UploadMixin:
         port = int(self.config.get('ftp_port', 21))
         user = self.config.get('ftp_user', '')
         password = self.config.get('ftp_password', '')
-        base = self.config.get('ftp_path', '/') or '/'
         readonly = bool(self.config.get('ftp_readonly', False))
 
         self._close_upload_modal()

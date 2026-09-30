@@ -43,9 +43,6 @@ class AppBase:
     MAX_LOG = 1000
     MAX_UNDO = 20
 
-    # Интервал (в секундах), в течение которого два клика по одной и
-    # той же строке дерева считаются двойным кликом. Значение близко
-    # к системным настройкам большинства ОС (400-500 мс).
     DOUBLE_CLICK_INTERVAL = 0.4
 
     HELP_TEXT = (
@@ -54,58 +51,86 @@ class AppBase:
         '  F3   Открыть выделенный файл\n'
         '  F4   Сортировка: Имя → Дата → Ошибки сверху\n'
         '  F5   Исправить все (уверенные случаи)\n'
-        '  F6   Пересканировать директорию\n'
+        '  F6   Пересканировать (Файлы) / обновить папку (FTP)\n'
         '  F7   Переименовать вручную (или двойной клик по имени)\n'
         '  F8   Показать очередь файлов из Загрузок\n'
         '  F9   Вкл/выкл мониторинг папки Загрузок (сохраняется)\n'
         '  F10  Открыть редактор конфига\n'
         '  F11  Очистить журнал\n'
-        '  F12  Загрузить выделенный файл на FTP\n'
+        '  F12  Загрузить выделенный файл на FTP (только «Файлы»)\n'
         ' ^Z    Отменить последнее переименование\n'
         ' ^C    Выход (или ^Q)\n'
         '\n'
+        ' Вкладки правой панели:\n'
+        '   Ctrl+→ / Ctrl+← или клик по вкладке — переключение.\n'
+        '   У каждой вкладки своя «Директория».\n'
+        '     • «Файлы» — локальное дерево;\n'
+        '     • «FTP»   — содержимое папки на сервере.\n'
+        '\n'
+        ' Чек-бокс «Отслеживать папку из вкладки «Файлы»» (на FTP):\n'
+        '   • включён и имя текущей локальной папки (или одной из\n'
+        '     её родительских) вида ГГГГ-ММ-ДД_Место — при переходе\n'
+        '     на FTP сервис сам подставит её и загрузит;\n'
+        '   • имя не подходит — сервис попросит ввести путь вручную;\n'
+        '   • выключен — директория FTP редактируется независимо.\n'
+        '   Переключить: Пробел или клик по строке с чек-боксом.\n'
+        '   Синхронизация выполняется только при переходе на вкладку\n'
+        '   FTP, а не при каждой смене папки на «Файлах».\n'
+        '\n'
+        ' Удаление файлов на FTP:\n'
+        '   Клавиша Del или кнопка [✕] рядом с файлом. Открывается\n'
+        '   модальное окно подтверждения. Работает только когда\n'
+        '   ftp_readonly = false (режим эмуляции запрещает удаление).\n'
+        '   Папки через этот механизм не удаляются.\n'
+        '\n'
         ' Мышь:\n'
-        '   Клик по папке        — раскрыть / свернуть\n'
-        '   Клик по файлу        — выделить\n'
-        '   Двойной клик по файлу — переименовать (аналог F7)\n'
-        '   Клик по [⇪]          — загрузка на FTP\n'
-        '   Клик по [Правка]     — применить автоправку\n'
-        '   Колесо мыши          — прокрутка дерева и журнала\n'
+        '   Клик по вкладке        — переключить Файлы / FTP\n'
+        '   Клик по папке          — раскрыть / свернуть (Файлы) /\n'
+        '                            войти (FTP)\n'
+        '   Клик по файлу          — выделить\n'
+        '   Двойной клик по файлу  — переименовать (аналог F7)\n'
+        '   Клик по [⇪]            — загрузка на FTP\n'
+        '   Клик по [✕]            — удалить файл на FTP (с подтвержд.)\n'
+        '   Клик по [Правка]       — применить автоправку\n'
+        '   Клик по чек-боксу      — переключить отслеживание (FTP)\n'
+        '   Колесо мыши            — прокрутка\n'
         '\n'
         ' Журнал:\n'
         '   Прокрутка — колесо мыши, PageUp / PageDown, Home / End\n'
+        '\n'
+        ' Транслит кириллицы:\n'
+        '   Ctrl+T в поле ввода имени (F7) или папки (F12)\n'
+        '   заменит введённый текст на латиницу по ГОСТ 7.79-2000.\n'
         '\n'
         ' Конфиг (F10):\n'
         '   root_dir / downloads_dir / watch_downloads / theme\n'
         '   ftp_host / ftp_port / ftp_user / ftp_password / ftp_path\n'
         '   ftp_readonly — режим эмуляции: подключение и чтение реальны,\n'
-        '                  изменения (mkdir, upload) не выполняются\n'
+        '                  изменения (mkdir, upload, delete) запрещены\n'
         '   Файл: ' + str(config_path()) + '\n'
         '\n'
         ' Проверка имён файлов (общая):\n'
-        '   • .gpx и .plt — формат ГГГГММДД_Позывной\n'
-        '     (для скачанных — дата в начале, остаток в позывной);\n'
+        '   • .gpx и .plt — формат ГГГГММДД_Позывной;\n'
+        '     – первая буква позывного — заглавная (lisa → Lisa);\n'
+        '     – хвостовой номер — минимум 2 разряда,\n'
+        '       разделитель _/- перед цифрами убирается\n'
+        '       (lisa_1 и lisa1 → Lisa01; lisa-2 → Lisa02;\n'
+        '        lisa_12 → Lisa12);\n'
+        '   • .gpx без даты в имени — дата берётся из содержимого\n'
+        '     файла (последняя <time> в треке);\n'
         '   • <1-4 цифры>m.gpx — исключение, валидация не проводится;\n'
         '   • .wpt — только Waypoints_ГГГГММДД;\n'
         '   • остальные расширения не проверяются.\n'
         '\n'
         ' FTP (F12) — что можно отправить:\n'
-        '   • .gpx — ТОЛЬКО в виде <1-4 цифры>m.gpx\n'
-        '     (например, 100m.gpx или 20260917_999m.gpx).\n'
-        '     Обычный ГГГГММДД_Позывной.gpx не отправляется;\n'
-        '   • .plt — с корректным именем (см. «Проверка имён»);\n'
-        '   • .wpt — только Waypoints_ГГГГММДД.\n'
-        '   Папка назначения — строго ГГГГ-ММ-ДД_Место\n'
-        '   (латиница, цифры, «_», «-»). Ищется вверх по дереву от\n'
-        '   папки файла. Если не найдена — введите вручную.\n'
-        '   Ctrl+T в поле — транслит введённого значения.\n'
-        '   Папка создаётся на сервере автоматически.\n'
-        '   Для недопустимых файлов кнопка [⇪] в дереве не\n'
-        '   показывается, а F12 пишет причину в журнал.\n'
+        '   • .gpx — ТОЛЬКО в виде <1-4 цифры>m.gpx;\n'
+        '   • .plt — с корректным именем;\n'
+        '   • .wpt — только Waypoints_ГГГГММДД;\n'
+        '   • файлы из папки 10-Tracks НЕ отправляются.\n'
+        '   Папка назначения — строго ГГГГ-ММ-ДД_Место.\n'
+        '   Пустая папка и корень сервера не принимаются.\n'
         '\n'
         ' Мониторинг загрузок (F8/F9):\n'
-        '   Файл из Загрузок переносится в ТЕКУЩУЮ открытую\n'
-        '   директорию (то, что показано в поле «Путь»).\n'
         '   Y / Enter — перенести,  N — пропустить,  Esc — позже\n'
     )
 
@@ -128,26 +153,20 @@ class AppBase:
         self.tree = FileTree()
         self.tree.set_root(initial_dir)
 
-        # Состояние двойного клика в дереве: последний путь и время.
-        # Используется обработчиком _click_row для отличения одиночного
-        # клика от двойного (аналог F7 на имени файла).
+        self.active_tab = 'files'
+        self.ftp_follow_files = True
+
         self._last_click_path: Optional[Path] = None
         self._last_click_time: float = 0.0
 
     # ---------- inputs ----------
     def _init_inputs(self):
-        self.translit_input = TextArea(
-            height=1, prompt='> ', multiline=False,
-            accept_handler=self.on_translit,
-            history=InMemoryHistory(),
-        )
         self.path_input = TextArea(
             height=1, prompt='Путь: ', multiline=False,
             text=str(self.tree.root),
             accept_handler=self.on_path_change,
             history=InMemoryHistory(),
         )
-        self._override_tab(self.translit_input)
         self._override_tab(self.path_input)
 
     # ---------- log ----------
@@ -266,7 +285,6 @@ class AppBase:
 
     # ---------- current directory ----------
     def _current_target_dir(self) -> Path:
-        """Директория, в которую будут переноситься файлы из Загрузок."""
         try:
             txt = (self.path_input.text or '').strip()
             if txt:
@@ -279,16 +297,36 @@ class AppBase:
 
     # ---------- focus / tab ----------
     def _focused(self, name: str) -> bool:
-        w = self.app.layout.current_window
-        if name == 'translit':
-            return w is self.translit_input.window
+        try:
+            w = self.app.layout.current_window
+        except Exception:
+            return False
         if name == 'path':
             return w is self.path_input.window
+        if name == 'ftp_path':
+            inp = getattr(self, 'ftp_path_input', None)
+            return inp is not None and w is inp.window
+        if name == 'ftp_checkbox':
+            return w is getattr(self, 'ftp_checkbox_window', None)
         if name == 'tree':
             return w is self.tree_window
+        if name == 'ftp':
+            return w is getattr(self, 'ftp_list_window', None)
         if name == 'log':
             return w is self.log_window
         return False
+
+    def _focus_main_panel(self):
+        """Возвращает фокус в активное окно текущей вкладки."""
+        try:
+            if self.active_tab == 'ftp':
+                inp = getattr(self, 'ftp_path_input', None)
+                if inp is not None:
+                    self.app.layout.focus(inp.window)
+                    return
+            self.app.layout.focus(self.tree_window)
+        except Exception:
+            pass
 
     def _titled(self, label: str, body, name: str):
         def title() -> FormattedText:
@@ -300,12 +338,10 @@ class AppBase:
 
     # ---------- modal helpers ----------
     def _style_textarea_for_modal(self, ta: TextArea):
-        """TextArea внутри модалки: закрасить фон до правого края."""
         ta.window.char = ' '
         ta.window.style = 'class:modal.bg'
 
     def _modal_frame(self, body, title, width: int, height: int):
-        """Рамка модального окна с полностью непрозрачным фоном."""
         def _title_str() -> str:
             if callable(title):
                 return title() or ''
@@ -358,15 +394,8 @@ class AppBase:
         return VSplit([inner], width=D.exact(width))
 
     def _make_modal_float(
-        self,
-        body,
-        title,
-        cond,
-        width: int,
-        height: int,
-        z_index: int = 10,
+        self, body, title, cond, width: int, height: int, z_index: int = 10,
     ) -> Float:
-        """Float с модальным окном по центру экрана."""
         box = self._modal_frame(body, title, width, height)
         centered = HSplit([
             Window(height=D(weight=1)),
@@ -442,7 +471,8 @@ class AppBase:
             return [self.edit_input.window]
         if self.modal == 'upload':
             return [self.upload_name_input.window]
-        if self.modal in ('help', 'confirm_fix_all', 'move_download'):
+        if self.modal in ('help', 'confirm_fix_all', 'move_download',
+                          'confirm_ftp_delete'):
             return [self.modal_window]
         return []
 
@@ -483,7 +513,7 @@ class AppBase:
         self.modal = None
         self._pending_fix_list = []
         self._edit_target = None
-        self.app.layout.focus(self.tree_window)
+        self._focus_main_panel()
         self.invalidate()
 
     def _modal_title(self) -> str:
@@ -491,6 +521,8 @@ class AppBase:
             return ' ▶ Справка — F1 или Esc '
         if self.modal == 'confirm_fix_all':
             return ' ▶ Подтверждение — Enter/Y, Esc/N '
+        if self.modal == 'confirm_ftp_delete':
+            return ' ▶ Удаление файла на FTP — Enter/Y, Esc/N '
         if self.modal == 'move_download':
             n = len(self.pending_downloads)
             more = f' (+{n - 1})' if n > 1 else ''
@@ -510,12 +542,13 @@ class AppBase:
             lines.append('')
             lines.append('  Enter / Y — применить    Esc / N — отмена')
             return FormattedText([('class:modal', '\n'.join(lines))])
+        if self.modal == 'confirm_ftp_delete':
+            return self._ftp_delete_modal_text()
         if self.modal == 'move_download':
             return self._move_modal_text()
         return FormattedText([('', '')])
 
     def _move_modal_text(self) -> FormattedText:
-        """Содержимое модалки переноса файла из Загрузок."""
         from ..analyzer import human_size
         if not self.pending_downloads:
             return FormattedText([('', '')])
@@ -548,11 +581,6 @@ class AppBase:
         return FormattedText(frags)
 
     def _modal_kb(self) -> KeyBindings:
-        """Клавиши модалок подтверждения и переноса.
-
-        Хоткеи n/y продублированы кириллическими эквивалентами
-        физических клавиш в русской раскладке.
-        """
         kb = KeyBindings()
 
         @kb.add('escape')
@@ -579,6 +607,8 @@ class AppBase:
         def _(event):
             if self.modal == 'confirm_fix_all':
                 self._confirm_fix_all()
+            elif self.modal == 'confirm_ftp_delete':
+                self._confirm_ftp_delete()
             elif self.modal == 'move_download':
                 self.accept_move()
             else:

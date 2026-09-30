@@ -17,7 +17,6 @@ from ..handlers import DirHandler
 from watchdog.observers import Observer
 
 
-# Подсказки по клавишам в статус-баре.
 _STATUS_HINTS: List[Tuple[str, str, str, int]] = [
     ('F1',  'Спр',   'Справка',     100),
     ('^Q',  'Вых',   'Выход',       100),
@@ -85,6 +84,13 @@ class NavMixin:
 
     # ---------- actions ----------
     def _sync_path_to_selection(self):
+        """Обновляет поле «Путь:» на вкладке «Файлы» при навигации по
+        дереву.
+
+        Запрос на FTP НЕ выполняется: синхронизация вкладки FTP
+        происходит только в момент переключения на неё (см.
+        FtpTabMixin.switch_tab / _ftp_follow_from_files).
+        """
         if not self.tree.entries:
             return
         path, _ = self.tree.entries[self.tree.selected]
@@ -105,23 +111,12 @@ class NavMixin:
 
     # ---------- click handlers ----------
     def _click_row(self, path: Path):
-        """Клик по строке дерева.
-
-        Поведение:
-          • папка    — раскрыть / свернуть (как в файловых менеджерах);
-          • файл     — выделить;
-          • двойной клик по файлу — открыть модалку переименования,
-            аналог F7. Двойной клик определяется по времени между
-            двумя нажатиями (DOUBLE_CLICK_INTERVAL) на одном и том
-            же пути.
-        """
         def handler(event: MouseEvent):
             if event.event_type != MouseEventType.MOUSE_UP:
                 return
             if self.modal is not None:
                 return
 
-            # --- определяем двойной клик ---
             now = time.monotonic()
             is_double = (
                 self._last_click_path == path
@@ -133,9 +128,6 @@ class NavMixin:
             self.tree.select_by_path(path)
 
             if path.is_dir():
-                # для папок двойной клик == одиночному (раскрыть/свернуть);
-                # дополнительно сбрасываем состояние, чтобы следующий клик
-                # не считался «третьим» подряд
                 self.tree.toggle()
                 self._last_click_path = None
                 self._last_click_time = 0.0
@@ -144,10 +136,7 @@ class NavMixin:
                 self.app.invalidate()
                 return
 
-            # --- файл ---
             if is_double:
-                # Сбрасываем счётчик, чтобы «третий» клик не открыл
-                # модалку повторно сразу после её закрытия.
                 self._last_click_path = None
                 self._last_click_time = 0.0
                 self.app.layout.focus(self.tree_window)
@@ -155,7 +144,6 @@ class NavMixin:
                 self.open_edit_for_selection()
                 return
 
-            # одиночный клик — обычное выделение
             self._sync_path_to_selection()
             self.app.layout.focus(self.tree_window)
             self.app.invalidate()
@@ -206,7 +194,8 @@ class NavMixin:
 
             if path.is_dir():
                 arrow = '▼' if path in self.tree.expanded else '▶'
-                style = 'class:tree.dir' + (' class:tree.sel' if selected else '')
+                style = 'class:tree.dir' + (
+                    ' class:tree.sel' if selected else '')
                 frags.append((style, f'{indent}{arrow} {path.name}/\n',
                               self._click_row(path)))
                 continue
@@ -244,7 +233,6 @@ class NavMixin:
 
     # ---------- status bar ----------
     def _terminal_width(self) -> int:
-        """Ширина терминала в колонках."""
         try:
             return self.app.output.get_size().columns
         except Exception:
@@ -252,7 +240,6 @@ class NavMixin:
 
     @staticmethod
     def _build_hint(available: int) -> str:
-        """Собирает строку подсказок, укладываясь в available колонок."""
         if available <= 0:
             return ''
         hints = sorted(_STATUS_HINTS, key=lambda h: -h[3])

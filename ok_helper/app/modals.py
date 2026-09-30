@@ -1,12 +1,19 @@
-"""ModalsMixin: help / confirm_fix_all / move_download / edit_name."""
+"""ModalsMixin: help / confirm_fix_all / move_download / edit_name.
+
+Модалка confirm_ftp_delete живёт в FtpTabMixin — там же, где вся
+логика вкладки FTP, и добавляется в общий _modal_float через
+соответствующую condition (см. _build_common_modals).
+"""
 
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.key_binding import KeyBindings, merge_key_bindings
 from prompt_toolkit.layout import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import TextArea
 
 from ..analyzer import analyze_file
+from ..translit import transliterate
 
 
 class ModalsMixin:
@@ -15,29 +22,24 @@ class ModalsMixin:
         self._build_edit_name_modal()
         self._build_config_modal()
 
-    # ---------- help / confirm / move ----------
+    # ---------- help / confirm / move / ftp_delete ----------
     def _build_common_modals(self):
         self.modal_control = FormattedTextControl(
             text=self._modal_text,
             focusable=True,
             key_bindings=self._modal_kb(),
         )
-        # char=' ' + style — прямоугольник текстовой модалки
-        # закрашивается modal.bg до правого края каждой строки.
         self.modal_window = Window(
             self.modal_control, char=' ', style='class:modal.bg',
         )
 
-        # Для help/confirm/move содержимое отдаётся одним
-        # FormattedTextControl, у которого нет своего «нужного»
-        # размера — можно дать с запасом. height=24 = 20 строк тела
-        # плюс 4 служебные строки рамки и отступов.
         self._modal_float = self._make_modal_float(
             body=self.modal_window,
             title=self._modal_title,
             cond=Condition(
                 lambda: self.modal in
-                ('help', 'confirm_fix_all', 'move_download')),
+                ('help', 'confirm_fix_all', 'move_download',
+                 'confirm_ftp_delete')),
             width=86, height=24,
         )
 
@@ -50,22 +52,21 @@ class ModalsMixin:
         )
         self._style_textarea_for_modal(self.edit_input)
         self._override_tab(self.edit_input)
+        self._override_edit_translit_keys()
 
         self.edit_preview_window = Window(
             FormattedTextControl(text=self._edit_preview_text),
             height=2, char=' ', style='class:modal.bg',
         )
 
-        # content = preview(2) + input(1) + hint(1) = 4 строки.
-        # Плюс 4 служебные (рамка top/bottom + padding top/bottom) = 8.
-        # Меньшее значение сжимает edit_input до 0 — и prompt_toolkit
-        # выводит вместо строки ввода «window too small».
         body = HSplit([
             self.edit_preview_window,
             self.edit_input,
             Window(
                 FormattedTextControl(text=lambda: FormattedText([
-                    ('class:dim', '  Enter — применить,  Esc — отмена')
+                    ('class:dim',
+                     '  Enter — применить,  Esc — отмена,  '
+                     'Ctrl+T — транслит')
                 ])),
                 height=1, char=' ', style='class:modal.bg',
             ),
@@ -76,6 +77,22 @@ class ModalsMixin:
             title=' ▶ Переименование — F7 ',
             cond=Condition(lambda: self.modal == 'edit_name'),
             width=86, height=8,
+        )
+
+    def _override_edit_translit_keys(self):
+        custom = KeyBindings()
+
+        @custom.add('c-t')
+        def _(event):
+            text = self.edit_input.text
+            new = transliterate(text)
+            self.edit_input.text = new
+            self.edit_input.cursor_position = len(new)
+            event.app.invalidate()
+
+        old = self.edit_input.control.key_bindings
+        self.edit_input.control.key_bindings = (
+            merge_key_bindings([custom, old]) if old else custom
         )
 
     def _edit_preview_text(self) -> FormattedText:

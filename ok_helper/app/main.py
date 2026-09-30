@@ -11,19 +11,22 @@ from .config_modal import ConfigModalMixin
 from .actions import ActionsMixin
 from .downloads import DownloadsMixin
 from .upload_modal import UploadMixin
+from .ftp_tab import FtpTabMixin
 
 from config import config_path
 
 
 class App(AppBase, UIMixin, NavMixin, ModalsMixin,
-          ConfigModalMixin, ActionsMixin, DownloadsMixin, UploadMixin):
+          ConfigModalMixin, ActionsMixin, DownloadsMixin, UploadMixin,
+          FtpTabMixin):
     def __init__(self, initial_dir: Path, config: dict):
         self._init_state(initial_dir, config)
         self._init_inputs()
         self._init_tree()
+        self._init_ftp_tab()
         self._init_log()
-        self._init_modals()          # help / confirm / move / edit_name / config
-        self._build_upload_modal()   # F12 / [⇪]
+        self._init_modals()
+        self._build_upload_modal()
         self._init_layout()
         self._init_application()
 

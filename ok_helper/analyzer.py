@@ -6,8 +6,20 @@
     либо в формате «ГГГГММДД_Позывной», либо распознаваемым
     «скачанным» (дата в начале и позывной в остатке).
 
-  • <1-4 цифры>m.gpx — исключение: валидация не проводится
-    (это «метровые» треки, у них своя структура имени).
+    Позывной нормализуется:
+      – первая буква — заглавная ('lisa' → 'Lisa');
+      – хвостовой номер — минимум 2 разряда, разделитель '_'/'-'
+        перед цифрами убирается ('lisa_1' и 'lisa1' → 'Lisa01',
+        'lisa-2' → 'Lisa02', 'lisa_12' → 'Lisa12').
+      – если база уже оканчивается цифрой (номер уже в базе),
+        хвостовая группа _N / -N не трогается
+        ('Lisa01_1' → 'Lisa01_1').
+
+  • .gpx без даты в имени — дополнительно читаем содержимое
+    файла и берём дату из самой последней временной метки
+    (тег <time> в треке).
+
+  • <1-4 цифры>m.gpx — исключение: валидация не проводится.
 
   • .wpt — только в формате Waypoints_ГГГГММДД.
 
@@ -25,10 +37,6 @@ _LATIN_CALLSIGN_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 _FILENAME_RE = re.compile(r'^(\d{8})_(.+)$')
 
 # <1-4 цифры>m.gpx — «метровый» суффикс.
-# Lookbehind (?<!\d) не даёт засчитаться последним 1-4 цифрам в
-# более длинной числовой последовательности: без него `12345m`
-# матчилось бы как `2345m` (search), что нарушает правило
-# «ровно 1-4 цифры перед m».
 _GPX_M_SUFFIX_RE = re.compile(r'(?<!\d)\d{1,4}m$', re.IGNORECASE)
 
 # Waypoints_ГГГГММДД — единственный допустимый формат .wpt.
@@ -51,6 +59,16 @@ _TIME_PREFIX_RE = re.compile(r'^\s*\d{1,2}[-_:.]?\d{2}(?:[-_:.]?\d{2})?\s*')
 
 _LEADING_SEP = ' \t_-–—.'
 
+# Разбор хвостового номера позывного:
+#   1) base + ('_'|'-') + digits — с явным разделителем;
+#   2) pure-letter base + digits — без разделителя.
+_TRAILING_NUM_SEP_RE = re.compile(r'^(?P<base>.+?)(?P<sep>[_-])(?P<num>\d+)$')
+_TRAILING_NUM_GLUED_RE = re.compile(r'^(?P<base>[A-Za-z]+)(?P<num>\d+)$')
+
+# Дата в содержимом .gpx.
+_GPX_DATE_RE = re.compile(rb'(\d{4})-(\d{2})-(\d{2})')
+_GPX_TAIL_BYTES = 256 * 1024
+
 
 def _ok() -> dict:
     return {'has_error': False, 'new_name': None,
@@ -58,19 +76,108 @@ def _ok() -> dict:
 
 
 def is_m_gpx(path: Path) -> bool:
-    """True, если path — это *.gpx с суффиксом <1-4 цифры>m перед расширением.
-
-    Используется и общей валидацией имён (в analyze_file), и FTP-политикой:
-    только такие .gpx разрешены к отправке на сервер.
-    """
+    """True, если path — это *.gpx с суффиксом <1-4 цифры>m перед расширением."""
     return (path.suffix.lower() == '.gpx'
             and bool(_GPX_M_SUFFIX_RE.search(path.stem)))
 
 
 def sanitize_callsign(cs: str) -> str:
+    """Приводит к латинице и вырезает недопустимые символы.
+
+    Не трогает регистр и хвостовой номер — это делает
+    normalize_callsign().
+    """
     if _LATIN_CALLSIGN_RE.match(cs):
         return cs
     return re.sub(r'[^A-Za-z0-9_-]', '', transliterate(cs))
+
+
+def normalize_callsign(cs: str) -> str:
+    """Приводит позывной к каноническому виду.
+
+    Правила:
+      • первая буква — заглавная ('lisa' → 'Lisa');
+      • хвостовой номер — минимум 2 разряда, разделитель '_'/'-'
+        перед цифрами убирается ('lisa_1' → 'Lisa01',
+        'lisa1' → 'Lisa01', 'lisa-2' → 'Lisa02',
+        'lisa_12' → 'Lisa12', 'lisa_001' → 'Lisa001');
+      • если база УЖЕ оканчивается цифрой, значит номер уже в ней —
+        хвостовая группа `_N` / `-N` не трогается
+        ('Lisa01_1' → 'Lisa01_1', 'lisa01_1' → 'Lisa01_1').
+
+    Идемпотентна: normalize(normalize(x)) == normalize(x).
+
+    Хвостовой номер отсекается только если выполнено одно из:
+      • перед цифрами был разделитель '_' или '-';
+      • базис (часть до цифр) — только латинские буквы.
+    Иначе цифры считаются частью позывного ('A1B2' останется 'A1B2').
+    """
+    if not cs:
+        return cs
+
+    base, num, sep = cs, None, ''
+    m = _TRAILING_NUM_SEP_RE.match(cs)
+    if m:
+        base = m.group('base')
+        sep = m.group('sep')
+        num = m.group('num')
+    else:
+        m = _TRAILING_NUM_GLUED_RE.match(cs)
+        if m:
+            base = m.group('base')
+            num = m.group('num')
+
+    base = base.rstrip('_-')
+    if not base:
+        return cs
+
+    base = base[0].upper() + base[1:]
+
+    if num is None:
+        return base
+
+    # Номер уже в базе — хвостовую группу не трогаем,
+    # только сохраняем разделитель как был.
+    if base[-1].isdigit():
+        return base + sep + num
+
+    if len(num) < 2:
+        num = num.zfill(2)
+
+    return base + num
+
+
+def extract_date_from_gpx(path: Path) -> Optional[str]:
+    """Возвращает ГГГГММДД из содержимого .gpx или None."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size == 0:
+        return None
+
+    read_size = min(size, _GPX_TAIL_BYTES)
+    try:
+        with open(path, 'rb') as f:
+            if size > read_size:
+                f.seek(size - read_size)
+            data = f.read(read_size)
+    except OSError:
+        return None
+
+    matches = list(_GPX_DATE_RE.finditer(data))
+    if not matches:
+        return None
+
+    for m in reversed(matches):
+        y, mo, d = m.group(1), m.group(2), m.group(3)
+        try:
+            if not (1 <= int(mo) <= 12 and 1 <= int(d) <= 31):
+                continue
+            return f'{y.decode()}{mo.decode()}{d.decode()}'
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return None
 
 
 def _extract_date_and_rest(stem: str) -> Tuple[Optional[str], str]:
@@ -108,18 +215,18 @@ def _clean_rest(rest: str) -> Tuple[str, bool]:
 
 
 def _analyze_gpx_plt(stem: str, suffix: str) -> dict:
-    """Общая проверка имён .gpx и .plt."""
+    """Общая проверка имён .gpx и .plt (без чтения содержимого)."""
     m = _FILENAME_RE.match(stem)
     if m:
         date, cs = m.groups()
-        if _LATIN_CALLSIGN_RE.match(cs):
+        new_cs = normalize_callsign(sanitize_callsign(cs))
+        if new_cs == cs and _LATIN_CALLSIGN_RE.match(cs):
             return _ok()
-        new_cs = sanitize_callsign(cs)
-        if new_cs and new_cs != cs:
+        if new_cs and _LATIN_CALLSIGN_RE.match(new_cs):
             return {'has_error': True,
                     'new_name': f'{date}_{new_cs}{suffix}',
                     'confidence': 'high',
-                    'reason': 'транслит позывного'}
+                    'reason': 'нормализация позывного'}
         return {'has_error': True, 'new_name': None,
                 'confidence': 'none', 'reason': 'позывной не исправить'}
 
@@ -133,15 +240,46 @@ def _analyze_gpx_plt(stem: str, suffix: str) -> dict:
         return {'has_error': True, 'new_name': None,
                 'confidence': 'low',
                 'reason': f'дата найдена ({date_str}), позывной пуст'}
+
+    normalized = normalize_callsign(cleaned)
     if is_placeholder:
         return {'has_error': True,
-                'new_name': f'{date_str}_{cleaned}{suffix}',
+                'new_name': f'{date_str}_{normalized}{suffix}',
                 'confidence': 'low',
                 'reason': f'похоже на заглушку «{cleaned}»'}
     return {'has_error': True,
-            'new_name': f'{date_str}_{cleaned}{suffix}',
+            'new_name': f'{date_str}_{normalized}{suffix}',
             'confidence': 'medium',
             'reason': 'дата + позывной из имени'}
+
+
+def _analyze_gpx_with_content(path: Path, stem: str, suffix: str) -> dict:
+    """Fallback для .gpx без даты в имени."""
+    date_from_content = extract_date_from_gpx(path)
+    if not date_from_content:
+        return {'has_error': True, 'new_name': None,
+                'confidence': 'none',
+                'reason': 'дата не найдена ни в имени, ни в файле'}
+
+    cleaned, is_placeholder = _clean_rest(stem)
+    if not cleaned:
+        return {'has_error': True, 'new_name': None,
+                'confidence': 'low',
+                'reason': f'дата {date_from_content} из файла, '
+                          f'но имя не даёт позывного'}
+
+    normalized = normalize_callsign(cleaned)
+    new_name = f'{date_from_content}_{normalized}{suffix}'
+    if is_placeholder:
+        return {'has_error': True,
+                'new_name': new_name,
+                'confidence': 'low',
+                'reason': f'дата {date_from_content} из содержимого файла; '
+                          f'имя похоже на заглушку'}
+    return {'has_error': True,
+            'new_name': new_name,
+            'confidence': 'medium',
+            'reason': f'дата {date_from_content} из содержимого файла'}
 
 
 def _analyze_wpt(stem: str, suffix: str) -> dict:
@@ -169,19 +307,20 @@ def analyze_file(path: Path) -> dict:
     stem = path.stem
     suffix = path.suffix
 
-    # Правило 2: <1-4 цифры>m.gpx — валидация не проводится
     if is_m_gpx(path):
         return _ok()
 
-    # Правило 3: .wpt — только Waypoints_ГГГГММДД
     if suffix_lower == '.wpt':
         return _analyze_wpt(stem, suffix)
 
-    # Правило 1: .gpx и .plt — общая проверка
     if suffix_lower in ('.gpx', '.plt'):
-        return _analyze_gpx_plt(stem, suffix)
+        result = _analyze_gpx_plt(stem, suffix)
+        if (result['has_error'] and result['new_name'] is None
+                and result['reason'] == 'дата в имени не найдена'
+                and suffix_lower == '.gpx'):
+            return _analyze_gpx_with_content(path, stem, suffix)
+        return result
 
-    # Прочие расширения — не проверяем
     return _ok()
 
 

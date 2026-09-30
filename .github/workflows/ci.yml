@@ -13,7 +13,7 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────
-  # 1. Тесты: pytest на Linux и Windows, Python 3.11 и 3.12
+  # 1. Тесты: pytest с Allure-отчётом на Linux и Windows
   # ──────────────────────────────────────────────────────────────
   test:
     name: Тесты (${{ matrix.os }} / py${{ matrix.python-version }})
@@ -47,16 +47,88 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Запуск тестов
-        run: python -m pytest -v
+      - name: Запуск тестов с Allure
+        run: python -m pytest -v --alluredir=allure-results
+
+      - name: Сохранить сырые результаты Allure
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: allure-results-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: allure-results/
+          retention-days: 7
+          if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────
-  # 2. Сборка портативной версии для Windows (PyInstaller --onefile)
-  #    Запускается только после успешных тестов.
+  # 2. Сборка Allure-отчёта. Зависит от job'а тестов, но выполняется
+  #    даже если тесты упали (if: always()), чтобы можно было
+  #    посмотреть причину падения в человекочитаемом виде.
+  # ──────────────────────────────────────────────────────────────
+  allure-report:
+    name: Allure-отчёт
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Скачать все allure-results
+        uses: actions/download-artifact@v5
+        with:
+          pattern: allure-results-*
+          merge-multiple: true
+          path: allure-results
+
+      - name: Установка Allure CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y default-jre
+          curl -sSL https://github.com/allure-framework/allure2/releases/download/2.32.0/allure-2.32.0.tgz \
+            -o /tmp/allure.tgz
+          sudo tar -xzf /tmp/allure.tgz -C /opt
+          sudo ln -sf /opt/allure-2.32.0/bin/allure /usr/local/bin/allure
+          allure --version
+
+      - name: Генерация HTML-отчёта
+        run: allure generate allure-results --clean -o allure-report
+
+      - name: История отчётов (сохранение между запусками)
+        uses: actions/checkout@v6
+        if: always()
+        continue-on-error: true
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Загрузка HTML-отчёта как артефакта
+        uses: actions/upload-artifact@v6
+        with:
+          name: allure-report
+          path: allure-report/
+          retention-days: 30
+          if-no-files-found: error
+
+      # Публикуем отчёт на GitHub Pages в ветке gh-pages.
+      # Первый запуск создаст ветку автоматически.
+      - name: Публикация на GitHub Pages
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: allure-report
+          keep_files: true
+          commit_message: 'Allure report: ${{ github.sha }}'
+
+  # ──────────────────────────────────────────────────────────────
+  # 3. Сборка портативной версии для Windows (PyInstaller --onefile)
   # ──────────────────────────────────────────────────────────────
   build:
     name: Сборка (Windows)
     needs: test
+    if: success()
     runs-on: windows-latest
 
     steps:

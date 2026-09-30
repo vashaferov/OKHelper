@@ -1,4 +1,4 @@
-"""ActionsMixin: fix, fix_all, undo, open, scan, path/translit."""
+"""ActionsMixin: fix, fix_all, undo, open, scan, path."""
 
 import os
 import subprocess
@@ -8,17 +8,16 @@ from typing import List, Tuple
 
 from config import save_config
 from ..analyzer import analyze_file
-from ..translit import transliterate
 
 
 class ActionsMixin:
-    def on_translit(self, buffer):
-        text = buffer.text
-        buffer.reset()
-        if text.strip():
-            self.log(f'[ТРАНСЛИТ] «{text}» -> «{transliterate(text)}»')
-
     def on_path_change(self, buffer):
+        """Пользователь нажал Enter в поле «Путь:» на вкладке «Файлы».
+
+        Обновляем локальное дерево и watcher. Синхронизация с FTP
+        здесь не выполняется — она произойдёт при переключении на
+        вкладку FTP, если включён чек-бокс отслеживания.
+        """
         text = buffer.text.strip()
         p = Path(text).expanduser()
         if not p.is_dir():

@@ -1,71 +1,30 @@
-"""FTP-загрузка и валидация имени папки назначения."""
+"""FTP-загрузка, листинг и удаление файлов; валидация имени папки."""
 
 import ftplib
 import re
 from pathlib import Path
-from typing import Callable, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from .analyzer import analyze_file, is_m_gpx
 
 
 _FOLDER_RE = re.compile(r'^(\d{4})-(\d{2})-(\d{2})_([A-Za-z0-9_-]+)$')
 
-# Расширения, для которых в принципе возможна отправка.
-# Но этого мало — для каждого из них есть своё условие на имя:
-#   .gpx — только <1-4 цифры>m.gpx (например, 100m.gpx);
-#   .plt — общая валидация: ГГГГММДД_Позывной или «скачанное» имя;
-#   .wpt — только Waypoints_ГГГГММДД.
 ALLOWED_UPLOAD_EXTENSIONS = {'.gpx', '.plt', '.wpt'}
 
-
-def is_uploadable(path: Path, info: Optional[dict] = None) -> bool:
-    """True, если файл разрешено загружать на FTP.
-
-    Политика:
-      • .gpx — только если имя вида <1-4 цифры>m.gpx. Обычный формат
-        ГГГГММДД_Позывной для .gpx НЕ даёт права на отправку.
-      • .plt — общая валидация (ГГГГММДД_Позывной или распознанное
-        «скачанное» имя).
-      • .wpt — только Waypoints_ГГГГММДД.
-
-    info — опционально, уже посчитанный analyze_file(path) из кэша
-    FileTree. Используется только для .plt и .wpt.
-    """
-    suf = path.suffix.lower()
-    if suf not in ALLOWED_UPLOAD_EXTENSIONS:
-        return False
-
-    # .gpx — только *<1-4 цифры>m.gpx, независимо от info:
-    # даже если общая валидация пропустила файл (ГГГГММДД_Позывной),
-    # отправлять такой .gpx нельзя.
-    if suf == '.gpx':
-        return is_m_gpx(path)
-
-    # .plt / .wpt — по общей валидации
-    if info is None:
-        info = analyze_file(path)
-    return not info['has_error']
+_TENTRACKS_DIR_NAME = '10-tracks'
+_MAX_10TRACKS_LOOKUP = 20
 
 
-def upload_extensions_hint() -> str:
-    """Строка-подсказка для сообщений об ошибке."""
-    return '*.plt, *.wpt, *<1-4 цифры>m.gpx'
+# ─────────────────────────────────────────────────────────────────
+# Имена целевых папок
+# ─────────────────────────────────────────────────────────────────
 
-
-def upload_reason_for(path: Path, info: Optional[dict] = None) -> str:
-    """Возвращает человекочитаемую причину отказа для сообщения в лог."""
-    suf = path.suffix.lower()
-    if suf not in ALLOWED_UPLOAD_EXTENSIONS:
-        return f'расширение {path.suffix} не разрешено'
-    if suf == '.gpx':
-        return 'для .gpx разрешены только имена вида <1-4 цифры>m.gpx'
-    if info is None:
-        info = analyze_file(path)
-    return info['reason'] or 'имя не соответствует требованиям'
+def is_target_folder_name(name: str) -> bool:
+    return bool(_FOLDER_RE.match((name or '').strip()))
 
 
 def validate_folder_name(name: str) -> Tuple[bool, str]:
-    """Возвращает (ok, reason)."""
     if not name or not name.strip():
         return False, 'пустое имя'
     m = _FOLDER_RE.match(name.strip())
@@ -82,8 +41,70 @@ def validate_folder_name(name: str) -> Tuple[bool, str]:
     return True, ''
 
 
+def validate_upload_target(base_path: str, folder: str) -> Tuple[bool, str]:
+    f = (folder or '').strip()
+    if not f:
+        return False, 'папка назначения не задана'
+    if f in ('/', '\\', '.', '..'):
+        return False, 'нельзя заливать файлы в корень сервера'
+    if f.startswith('/') or f.startswith('\\'):
+        return False, 'имя папки не должно начинаться с «/»'
+    if any(part == '..' for part in re.split(r'[\\/]+', f)):
+        return False, 'некорректный путь папки'
+    return True, ''
+
+
+# ─────────────────────────────────────────────────────────────────
+# Политика отправки файлов
+# ─────────────────────────────────────────────────────────────────
+
+def is_in_10_tracks(path: Path, max_levels: int = _MAX_10TRACKS_LOOKUP) -> bool:
+    cur = path.parent
+    for _ in range(max_levels):
+        if cur.name.lower() == _TENTRACKS_DIR_NAME:
+            return True
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+    return False
+
+
+def is_uploadable(path: Path, info: Optional[dict] = None) -> bool:
+    suf = path.suffix.lower()
+    if suf not in ALLOWED_UPLOAD_EXTENSIONS:
+        return False
+    if is_in_10_tracks(path):
+        return False
+    if suf == '.gpx':
+        return is_m_gpx(path)
+    if info is None:
+        info = analyze_file(path)
+    return not info['has_error']
+
+
+def upload_extensions_hint() -> str:
+    return '*.plt, *.wpt, *<1-4 цифры>m.gpx'
+
+
+def upload_reason_for(path: Path, info: Optional[dict] = None) -> str:
+    suf = path.suffix.lower()
+    if suf not in ALLOWED_UPLOAD_EXTENSIONS:
+        return f'расширение {path.suffix} не разрешено'
+    if is_in_10_tracks(path):
+        return 'файлы из папки «10-Tracks» на FTP не отправляются'
+    if suf == '.gpx':
+        return 'для .gpx разрешены только имена вида <1-4 цифры>m.gpx'
+    if info is None:
+        info = analyze_file(path)
+    return info['reason'] or 'имя не соответствует требованиям'
+
+
+# ─────────────────────────────────────────────────────────────────
+# Поиск целевой папки (локально)
+# ─────────────────────────────────────────────────────────────────
+
 def find_target_folder(start: Path, max_levels: int = 5) -> Tuple[str, bool]:
-    """Идёт от start вверх, ищет папку вида ГГГГ-ММ-ДД_Место."""
     cur = start
     for _ in range(max_levels + 1):
         if _FOLDER_RE.match(cur.name):
@@ -99,6 +120,135 @@ class FtpError(Exception):
     pass
 
 
+# ─────────────────────────────────────────────────────────────────
+# Листинг папки
+# ─────────────────────────────────────────────────────────────────
+
+def _cwd_to_folder(ftp: ftplib.FTP, base_path: str, folder: str,
+                   create_missing: bool = False,
+                   log: Optional[Callable[[str], None]] = None) -> None:
+    """Спускается по base_path/folder. Если create_missing=False —
+    папки должны существовать, иначе FtpError."""
+    def _log(msg: str):
+        if log:
+            log(msg)
+
+    base = (base_path or '/').strip()
+    if base and base != '/':
+        for part in base.strip('/').split('/'):
+            if not part:
+                continue
+            try:
+                ftp.cwd(part)
+            except ftplib.error_perm:
+                if not create_missing:
+                    raise FtpError(f'нет папки {part} на сервере')
+                _log(f'[FTP] Создаю папку {part}')
+                try:
+                    ftp.mkd(part)
+                except ftplib.error_perm as e:
+                    raise FtpError(f'не создать {part}: {e}')
+                ftp.cwd(part)
+
+    for part in folder.strip('/').split('/'):
+        if not part:
+            continue
+        try:
+            ftp.cwd(part)
+        except ftplib.error_perm:
+            if not create_missing:
+                raise FtpError(f'нет папки {part} на сервере')
+            _log(f'[FTP] Создаю папку {part}')
+            try:
+                ftp.mkd(part)
+            except ftplib.error_perm as e:
+                raise FtpError(f'не создать папку {part}: {e}')
+            ftp.cwd(part)
+
+
+def list_folder(
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    base_path: str,
+    folder: str,
+    log: Optional[Callable[[str], None]] = None,
+) -> List[Tuple[str, bool, int]]:
+    """Возвращает содержимое папки на FTP: [(name, is_dir, size), ...]."""
+    def _log(msg: str):
+        if log:
+            log(msg)
+
+    if not host:
+        raise FtpError('ftp_host не задан в конфиге')
+    if not user:
+        raise FtpError('ftp_user не задан в конфиге')
+    if not (folder or '').strip():
+        raise FtpError('папка на сервере не задана')
+
+    ftp = ftplib.FTP()
+    try:
+        ftp.connect(host, port, timeout=30)
+        ftp.login(user, password)
+        ftp.set_pasv(True)
+
+        _cwd_to_folder(ftp, base_path, folder, create_missing=False, log=log)
+
+        entries: List[Tuple[str, bool, int]] = []
+
+        try:
+            for name, facts in ftp.mlsd():
+                if name in ('.', '..'):
+                    continue
+                t = (facts.get('type') or '').lower()
+                if t == 'dir':
+                    entries.append((name, True, 0))
+                elif t == 'file':
+                    try:
+                        size = int(facts.get('size', '0'))
+                    except (ValueError, TypeError):
+                        size = 0
+                    entries.append((name, False, size))
+            _log(f'[FTP] Листинг {folder}: {len(entries)} элементов')
+        except (ftplib.error_perm, ftplib.error_proto, AttributeError):
+            _log('[FTP] MLSD не поддерживается, использую NLST')
+            names = []
+            try:
+                names = ftp.nlst()
+            except ftplib.all_errors as e:
+                raise FtpError(f'не получить листинг: {e}')
+
+            for name in names:
+                if name in ('.', '..'):
+                    continue
+                if '/' in name:
+                    name = name.rsplit('/', 1)[-1]
+                try:
+                    ftp.cwd(name)
+                    ftp.cwd('..')
+                    entries.append((name, True, 0))
+                except ftplib.error_perm:
+                    entries.append((name, False, 0))
+
+        entries.sort(key=lambda e: (not e[1], e[0].lower()))
+        return entries
+    except ftplib.all_errors as e:
+        raise FtpError(str(e))
+    finally:
+        try:
+            ftp.quit()
+        except Exception:
+            try:
+                ftp.close()
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────
+# Загрузка файла
+# ─────────────────────────────────────────────────────────────────
+
 def upload_file(
     host: str,
     port: int,
@@ -110,14 +260,7 @@ def upload_file(
     log: Optional[Callable[[str], None]] = None,
     readonly: bool = False,
 ) -> None:
-    """Загружает local_file в base_path/folder/ на FTP-сервере.
-
-    readonly=True — режим эмуляции:
-      • connect / login — реальные;
-      • переход по base_path и папке назначения — реальный cwd;
-      • проверка существования папки и файла — реальная (cwd, nlst);
-      • но mkdir, STOR и любые другие изменения НЕ выполняются.
-    """
+    """Загружает local_file в base_path/folder/ на FTP-сервере."""
     def _log(msg: str):
         if log:
             log(msg)
@@ -127,8 +270,6 @@ def upload_file(
     if not user:
         raise FtpError('ftp_user не задан в конфиге')
 
-    # Единая точка проверки: не пропустить нештатный формат, даже
-    # если вызов пришёл из обходного места кода.
     if not is_uploadable(local_file):
         raise FtpError(
             f'недопустимый файл: {local_file.name} '
@@ -139,6 +280,10 @@ def upload_file(
     ok, reason = validate_folder_name(folder)
     if not ok:
         raise FtpError(f'некорректное имя папки: {reason}')
+
+    ok, reason = validate_upload_target(base_path, folder)
+    if not ok:
+        raise FtpError(reason)
 
     if not local_file.is_file():
         raise FtpError(f'локальный файл не найден: {local_file}')
@@ -154,70 +299,111 @@ def upload_file(
         if readonly:
             _log('[FTP] *** РЕЖИМ ЭМУЛЯЦИИ: изменения на сервере '
                  'заблокированы ***')
-
-        base = (base_path or '/').strip()
-        if base and base != '/':
-            for part in base.strip('/').split('/'):
-                if not part:
-                    continue
-                try:
-                    ftp.cwd(part)
-                except ftplib.error_perm:
-                    if readonly:
-                        _log(f'[FTP] [эмуляция] папка {part} отсутствует '
-                             f'и была бы создана')
-                        _log(f'[FTP] [эмуляция] {local_file.name} был бы '
-                             f'загружен в {folder}/ (запись пропущена)')
-                        return
-                    _log(f'[FTP] Создаю папку {part}')
-                    try:
-                        ftp.mkd(part)
-                    except ftplib.error_perm as e:
-                        raise FtpError(f'не создать {part}: {e}')
-                    ftp.cwd(part)
-
-        folder_exists = True
-        try:
-            ftp.cwd(folder)
-        except ftplib.error_perm:
-            folder_exists = False
-
-        if folder_exists:
-            _log(f'[FTP] Папка {folder} уже существует')
-            try:
-                names = ftp.nlst()
-                if local_file.name in names:
-                    _log(f'[FTP] Внимание: {local_file.name} уже есть '
-                         f'на сервере — реальная загрузка перезапишет')
-            except ftplib.all_errors:
-                pass
-        else:
-            if readonly:
-                _log(f'[FTP] [эмуляция] папка {folder} отсутствует '
-                     f'и была бы создана')
-            else:
-                _log(f'[FTP] Создаю папку {folder}')
-                try:
-                    ftp.mkd(folder)
-                except ftplib.error_perm as e:
-                    raise FtpError(f'не создать папку {folder}: {e}')
-                ftp.cwd(folder)
-
-        if readonly:
+            # В эмуляции: переходим и показываем, что «было бы».
+            _cwd_to_folder(ftp, base_path, folder,
+                           create_missing=False, log=log)
             try:
                 size = local_file.stat().st_size
             except OSError:
                 size = 0
             _log(f'[FTP] [эмуляция] {local_file.name} ({size} Б) был бы '
                  f'загружен в {folder}/ (запись пропущена)')
-            _log(f'[FTP] [эмуляция] имитация завершена успешно')
+            _log('[FTP] [эмуляция] имитация завершена успешно')
             return
+
+        # Реальная загрузка с созданием папок при необходимости.
+        try:
+            _cwd_to_folder(ftp, base_path, folder,
+                           create_missing=True, log=log)
+        except FtpError:
+            # Возможно базовая папка не существует — попробуем с
+            # созданием по частям.
+            raise
+
+        _log(f'[FTP] Папка {folder} готова')
+        try:
+            names = ftp.nlst()
+            if local_file.name in names:
+                _log(f'[FTP] Внимание: {local_file.name} уже есть '
+                     f'на сервере — реальная загрузка перезапишет')
+        except ftplib.all_errors:
+            pass
 
         size = local_file.stat().st_size
         _log(f'[FTP] Загружаю {local_file.name} ({size} Б)...')
         with open(local_file, 'rb') as f:
             ftp.storbinary(f'STOR {local_file.name}', f)
         _log(f'[FTP] Готово: {folder}/{local_file.name}')
+    except ftplib.all_errors as e:
+        raise FtpError(str(e))
+    finally:
+        try:
+            ftp.quit()
+        except Exception:
+            try:
+                ftp.close()
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────
+# Удаление файла
+# ─────────────────────────────────────────────────────────────────
+
+def delete_file(
+    host: str,
+    port: int,
+    user: str,
+    password: str,
+    base_path: str,
+    folder: str,
+    filename: str,
+    log: Optional[Callable[[str], None]] = None,
+    readonly: bool = False,
+) -> None:
+    """Удаляет файл filename из base_path/folder/ на FTP-сервере.
+
+    В режиме эмуляции (readonly=True) выбрасывает FtpError — удаление
+    запрещено и не выполняется. UI должен проверять флаг заранее и
+    не открывать модалку подтверждения.
+    """
+    def _log(msg: str):
+        if log:
+            log(msg)
+
+    if readonly:
+        raise FtpError('удаление запрещено в режиме эмуляции '
+                       '(ftp_readonly=true)')
+
+    if not host:
+        raise FtpError('ftp_host не задан в конфиге')
+    if not user:
+        raise FtpError('ftp_user не задан в конфиге')
+    if not (folder or '').strip():
+        raise FtpError('папка на сервере не задана')
+
+    # Защита от path traversal и попыток уйти в родителя.
+    name = (filename or '').strip()
+    if (not name or name in ('.', '..')
+            or any(c in name for c in ('/', '\\', '\x00'))):
+        raise FtpError(f'некорректное имя файла: {filename!r}')
+
+    ftp = ftplib.FTP()
+    try:
+        _log(f'[FTP] Подключение к {host}:{port}...')
+        ftp.connect(host, port, timeout=30)
+        ftp.login(user, password)
+        ftp.set_pasv(True)
+
+        _cwd_to_folder(ftp, base_path, folder,
+                       create_missing=False, log=log)
+
+        _log(f'[FTP] Удаляю {folder}/{name}...')
+        try:
+            ftp.delete(name)
+        except ftplib.error_perm as e:
+            raise FtpError(f'не удалить {name}: {e}')
+        _log(f'[FTP] Удалён: {folder}/{name}')
     except ftplib.all_errors as e:
         raise FtpError(str(e))
     finally:
