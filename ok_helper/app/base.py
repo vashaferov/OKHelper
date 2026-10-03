@@ -36,6 +36,7 @@ _LOG_LEVEL_BY_TAG = {
     'ОТКР': 'open', 'OPEN': 'open',
     'ОТМЕНА': 'undo', 'UNDO': 'undo',
     'ТРАНСЛИТ': 'translit',
+    'БУФЕР': 'copy',
 }
 
 
@@ -59,47 +60,29 @@ class AppBase:
         '  F11  Очистить журнал\n'
         '  F12  Загрузить выделенный файл на FTP (только «Файлы»)\n'
         ' ^Z    Отменить последнее переименование\n'
+        ' ^N    Создать новую папку (вкладка «Файлы»)\n'
+        ' ^Y    Скопировать имя выделенного элемента в буфер обмена\n'
         ' ^C    Выход (или ^Q)\n'
+        '\n'
+        ' Создание папок:\n'
+        '   Ctrl+N на вкладке «Файлы» создаёт папку ЛОКАЛЬНО,\n'
+        '   в текущей открытой директории. На FTP папка появится\n'
+        '   автоматически при загрузке в неё файла через F12.\n'
+        '\n'
+        ' Копирование имени:\n'
+        '   Ctrl+Y копирует имя выделенного элемента в системный\n'
+        '   буфер обмена. Работает на обеих вкладках.\n'
         '\n'
         ' Вкладки правой панели:\n'
         '   Ctrl+→ / Ctrl+← или клик по вкладке — переключение.\n'
-        '   У каждой вкладки своя «Директория».\n'
-        '     • «Файлы» — локальное дерево;\n'
-        '     • «FTP»   — содержимое папки на сервере.\n'
-        '\n'
-        ' Чек-бокс «Отслеживать папку из вкладки «Файлы»» (на FTP):\n'
-        '   • включён и имя текущей локальной папки (или одной из\n'
-        '     её родительских) вида ГГГГ-ММ-ДД_Место — при переходе\n'
-        '     на FTP сервис сам подставит её и загрузит;\n'
-        '   • имя не подходит — сервис попросит ввести путь вручную;\n'
-        '   • выключен — директория FTP редактируется независимо.\n'
-        '   Переключить: Пробел или клик по строке с чек-боксом.\n'
-        '   Синхронизация выполняется только при переходе на вкладку\n'
-        '   FTP, а не при каждой смене папки на «Файлах».\n'
-        '\n'
-        ' Удаление файлов на FTP:\n'
-        '   Клавиша Del или кнопка [✕] рядом с файлом. Открывается\n'
-        '   модальное окно подтверждения. Работает только когда\n'
-        '   ftp_readonly = false (режим эмуляции запрещает удаление).\n'
-        '   Папки через этот механизм не удаляются.\n'
-        '\n'
-        ' Мышь:\n'
-        '   Клик по вкладке        — переключить Файлы / FTP\n'
-        '   Клик по папке          — раскрыть / свернуть (Файлы) /\n'
-        '                            войти (FTP)\n'
-        '   Клик по файлу          — выделить\n'
-        '   Двойной клик по файлу  — переименовать (аналог F7)\n'
-        '   Клик по [⇪]            — загрузка на FTP\n'
-        '   Клик по [✕]            — удалить файл на FTP (с подтвержд.)\n'
-        '   Клик по [Правка]       — применить автоправку\n'
-        '   Клик по чек-боксу      — переключить отслеживание (FTP)\n'
-        '   Колесо мыши            — прокрутка\n'
         '\n'
         ' Журнал:\n'
         '   Прокрутка — колесо мыши, PageUp / PageDown, Home / End\n'
+        '   Новые записи всегда видны — окно автоматически\n'
+        '   подматывается к нижней строке.\n'
         '\n'
         ' Транслит кириллицы:\n'
-        '   Ctrl+T в поле ввода имени (F7) или папки (F12)\n'
+        '   Ctrl+T в поле ввода имени (F7, Ctrl+N) или папки (F12)\n'
         '   заменит введённый текст на латиницу по ГОСТ 7.79-2000.\n'
         '\n'
         ' Конфиг (F10):\n'
@@ -113,9 +96,9 @@ class AppBase:
         '   • .gpx и .plt — формат ГГГГММДД_Позывной;\n'
         '     – первая буква позывного — заглавная (lisa → Lisa);\n'
         '     – хвостовой номер — минимум 2 разряда,\n'
-        '       разделитель _/- перед цифрами убирается\n'
-        '       (lisa_1 и lisa1 → Lisa01; lisa-2 → Lisa02;\n'
-        '        lisa_12 → Lisa12);\n'
+        '       разделитель _/- перед цифрами убирается;\n'
+        '     – если база уже оканчивается цифрой (Lisa01_1),\n'
+        '       хвостовая группа _N/-N сохраняется как есть;\n'
         '   • .gpx без даты в имени — дата берётся из содержимого\n'
         '     файла (последняя <time> в треке);\n'
         '   • <1-4 цифры>m.gpx — исключение, валидация не проводится;\n'
@@ -158,6 +141,8 @@ class AppBase:
 
         self._last_click_path: Optional[Path] = None
         self._last_click_time: float = 0.0
+
+        self._new_folder_base: Optional[Path] = None
 
     # ---------- inputs ----------
     def _init_inputs(self):
@@ -220,6 +205,54 @@ class AppBase:
             frags.pop()
         return FormattedText(frags)
 
+    def _log_rendered_lines(self) -> int:
+        """Приблизительное число отрисованных строк журнала.
+
+        Считает, сколько строк займёт содержимое журнала с учётом
+        wrap_lines. Нужно, потому что vertical_scroll в prompt_toolkit
+        измеряется в отрендеренных строках, а не в записях. Одна
+        запись может занять несколько строк, если она длинная.
+
+        Формат одной записи: «HH:MM:SS  » (10 символов) плюс, если
+        есть тег, «[TAG]».ljust(10) (10 символов) плюс текст сообщения
+        без тега. Если тега нет — «HH:MM:SS  » плюс весь текст.
+
+        Оценка округляется вверх — лучше переоценить, чем недооценить:
+        prompt_toolkit аккуратно обрезает excessive vertical_scroll
+        при рендере.
+        """
+        # Ширина окна журнала. Если рендер ещё не случался —
+        # берём ширину терминала как fallback.
+        width = 0
+        try:
+            info = self.log_window.render_info
+            if info is not None:
+                width = info.window_width
+        except Exception:
+            width = 0
+        if not width or width <= 0:
+            try:
+                width = self.app.output.get_size().columns
+            except Exception:
+                width = 120
+        if not width or width <= 0:
+            width = 80
+
+        total = 0
+        with self.lock:
+            snapshot = list(self.lines)
+        for ts, level, msg in snapshot:
+            m = _LOG_TAG_RE.match(msg)
+            if m:
+                # ts(8) + '  '(2) + tag.ljust(10)(10) + msg без тега
+                text_len = 8 + 2 + 10 + (len(msg) - m.end())
+            else:
+                text_len = 8 + 2 + len(msg)
+            if text_len <= 0:
+                text_len = 1
+            total += (text_len + width - 1) // width
+        return total
+
     def _after_log_update(self):
         self._scroll_log_to_bottom()
         self.app.invalidate()
@@ -229,9 +262,8 @@ class AppBase:
             w = self.log_window
             info = getattr(w, 'render_info', None)
             h = info.window_height if info else 0
-            with self.lock:
-                total = len(self.lines)
-            if h > 0:
+            total = self._log_rendered_lines()
+            if h > 0 and total > 0:
                 w.vertical_scroll = max(0, total - h)
         except Exception:
             pass
@@ -244,11 +276,14 @@ class AppBase:
             cur = w.vertical_scroll
             info = getattr(w, 'render_info', None)
             h = info.window_height if info else 0
-            with self.lock:
-                total = len(self.lines)
-            if h > 0:
-                cur = min(cur, max(0, total - h))
-            w.vertical_scroll = max(0, cur + delta)
+            total = self._log_rendered_lines()
+            if h > 0 and total > 0:
+                max_scroll = max(0, total - h)
+                cur = min(cur, max_scroll)
+                cur = max(0, min(max_scroll, cur + delta))
+            else:
+                cur = max(0, cur + delta)
+            w.vertical_scroll = cur
             self.app.invalidate()
         except Exception:
             pass
@@ -317,7 +352,6 @@ class AppBase:
         return False
 
     def _focus_main_panel(self):
-        """Возвращает фокус в активное окно текущей вкладки."""
         try:
             if self.active_tab == 'ftp':
                 inp = getattr(self, 'ftp_path_input', None)
@@ -437,6 +471,17 @@ class AppBase:
                 self._close_modal()
             event.app.invalidate()
 
+        @custom.add('c-n', filter=Condition(
+            lambda: self.modal is None and self.active_tab == 'files'))
+        def _(event):
+            self.open_new_folder_modal()
+            event.app.invalidate()
+
+        @custom.add('c-y', filter=Condition(lambda: self.modal is None))
+        def _(event):
+            self.copy_selected_name()
+            event.app.invalidate()
+
         if with_arrows:
             @custom.add('up', filter=Condition(lambda: self.modal is not None))
             def _(event):
@@ -469,6 +514,8 @@ class AppBase:
             ]
         if self.modal == 'edit_name':
             return [self.edit_input.window]
+        if self.modal == 'new_folder':
+            return [self.new_folder_input.window]
         if self.modal == 'upload':
             return [self.upload_name_input.window]
         if self.modal in ('help', 'confirm_fix_all', 'move_download',
@@ -513,6 +560,7 @@ class AppBase:
         self.modal = None
         self._pending_fix_list = []
         self._edit_target = None
+        self._new_folder_base = None
         self._focus_main_panel()
         self.invalidate()
 

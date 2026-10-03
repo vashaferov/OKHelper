@@ -36,10 +36,7 @@ from .translit import transliterate
 _LATIN_CALLSIGN_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 _FILENAME_RE = re.compile(r'^(\d{8})_(.+)$')
 
-# <1-4 цифры>m.gpx — «метровый» суффикс.
 _GPX_M_SUFFIX_RE = re.compile(r'(?<!\d)\d{1,4}m$', re.IGNORECASE)
-
-# Waypoints_ГГГГММДД — единственный допустимый формат .wpt.
 _WPT_NAME_RE = re.compile(r'^Waypoints_(\d{8})$', re.IGNORECASE)
 
 _DATE_PATTERNS = [
@@ -59,15 +56,16 @@ _TIME_PREFIX_RE = re.compile(r'^\s*\d{1,2}[-_:.]?\d{2}(?:[-_:.]?\d{2})?\s*')
 
 _LEADING_SEP = ' \t_-–—.'
 
-# Разбор хвостового номера позывного:
-#   1) base + ('_'|'-') + digits — с явным разделителем;
-#   2) pure-letter base + digits — без разделителя.
 _TRAILING_NUM_SEP_RE = re.compile(r'^(?P<base>.+?)(?P<sep>[_-])(?P<num>\d+)$')
 _TRAILING_NUM_GLUED_RE = re.compile(r'^(?P<base>[A-Za-z]+)(?P<num>\d+)$')
 
-# Дата в содержимом .gpx.
 _GPX_DATE_RE = re.compile(rb'(\d{4})-(\d{2})-(\d{2})')
 _GPX_TAIL_BYTES = 256 * 1024
+
+# Запрещённые символы в именах файлов/папок.
+# На Linux большинство из них допустимо, но для переносимости
+# (Windows, SMB-шары, синхронизация) режем везде.
+_INVALID_NAME_CHARS = set('/\\:*?"<>|\x00')
 
 
 def _ok() -> dict:
@@ -79,6 +77,24 @@ def is_m_gpx(path: Path) -> bool:
     """True, если path — это *.gpx с суффиксом <1-4 цифры>m перед расширением."""
     return (path.suffix.lower() == '.gpx'
             and bool(_GPX_M_SUFFIX_RE.search(path.stem)))
+
+
+def validate_new_folder_name(name: str) -> Tuple[bool, str]:
+    """Проверяет имя новой папки (для локального создания через Ctrl+N).
+
+    Возвращает (ok, reason). Не проверяет существование папки —
+    это делает вызывающий код.
+    """
+    if not name or not name.strip():
+        return False, 'пустое имя'
+    name = name.strip()
+    if name in ('.', '..'):
+        return False, 'некорректное имя'
+    if any(c in _INVALID_NAME_CHARS for c in name):
+        return False, 'имя содержит недопустимые символы (\\ / : * ? " < > |)'
+    if name.endswith('.'):
+        return False, 'имя не может оканчиваться точкой'
+    return True, ''
 
 
 def sanitize_callsign(cs: str) -> str:
@@ -101,16 +117,10 @@ def normalize_callsign(cs: str) -> str:
         перед цифрами убирается ('lisa_1' → 'Lisa01',
         'lisa1' → 'Lisa01', 'lisa-2' → 'Lisa02',
         'lisa_12' → 'Lisa12', 'lisa_001' → 'Lisa001');
-      • если база УЖЕ оканчивается цифрой, значит номер уже в ней —
-        хвостовая группа `_N` / `-N` не трогается
-        ('Lisa01_1' → 'Lisa01_1', 'lisa01_1' → 'Lisa01_1').
+      • если база УЖЕ оканчивается цифрой, хвостовая группа
+        `_N` / `-N` не трогается ('Lisa01_1' → 'Lisa01_1').
 
     Идемпотентна: normalize(normalize(x)) == normalize(x).
-
-    Хвостовой номер отсекается только если выполнено одно из:
-      • перед цифрами был разделитель '_' или '-';
-      • базис (часть до цифр) — только латинские буквы.
-    Иначе цифры считаются частью позывного ('A1B2' останется 'A1B2').
     """
     if not cs:
         return cs
@@ -136,8 +146,6 @@ def normalize_callsign(cs: str) -> str:
     if num is None:
         return base
 
-    # Номер уже в базе — хвостовую группу не трогаем,
-    # только сохраняем разделитель как был.
     if base[-1].isdigit():
         return base + sep + num
 

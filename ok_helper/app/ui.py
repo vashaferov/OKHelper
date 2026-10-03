@@ -58,6 +58,7 @@ class UIMixin:
             floats=[
                 self._modal_float,
                 self._edit_float,
+                self._new_folder_float,
                 self._config_float,
                 self._upload_float,
             ],
@@ -66,7 +67,7 @@ class UIMixin:
     # ---------- titles ----------
     def _files_title(self):
         return [('class:title',
-                 ' Файлы — F1 справка, [Правка]/[⇪] клик ')]
+                 ' Файлы — Ctrl+N новая папка, Ctrl+Y копировать имя ')]
 
     def _ftp_top_title(self):
         return [('class:title',
@@ -138,6 +139,20 @@ class UIMixin:
         def _(event):
             other = 'ftp' if self.active_tab == 'files' else 'files'
             self.switch_tab(other)
+            event.app.invalidate()
+
+        # Ctrl+N — создать новую папку (только на вкладке «Файлы»).
+        @kb.add('c-n')
+        def _(event):
+            if self.modal is None and self.active_tab == 'files':
+                self.open_new_folder_modal()
+            event.app.invalidate()
+
+        # Ctrl+Y — скопировать имя выделенного элемента в буфер.
+        @kb.add('c-y')
+        def _(event):
+            if self.modal is None:
+                self.copy_selected_name()
             event.app.invalidate()
 
         @kb.add('f1')

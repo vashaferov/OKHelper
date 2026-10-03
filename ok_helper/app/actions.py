@@ -1,10 +1,10 @@
-"""ActionsMixin: fix, fix_all, undo, open, scan, path."""
+"""ActionsMixin: fix, fix_all, undo, open, scan, path, copy."""
 
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from config import save_config
 from ..analyzer import analyze_file
@@ -12,12 +12,7 @@ from ..analyzer import analyze_file
 
 class ActionsMixin:
     def on_path_change(self, buffer):
-        """Пользователь нажал Enter в поле «Путь:» на вкладке «Файлы».
-
-        Обновляем локальное дерево и watcher. Синхронизация с FTP
-        здесь не выполняется — она произойдёт при переключении на
-        вкладку FTP, если включён чек-бокс отслеживания.
-        """
+        """Пользователь нажал Enter в поле «Путь:» на вкладке «Файлы»."""
         text = buffer.text.strip()
         p = Path(text).expanduser()
         if not p.is_dir():
@@ -36,6 +31,37 @@ class ActionsMixin:
         self.log(f'[КАТАЛОГ] {p}')
         self.scan_dir(p)
         self.invalidate()
+
+    def copy_selected_name(self):
+        """Копирует имя выделенного элемента в системный буфер обмена.
+
+        Работает на обеих вкладках:
+          • «Файлы» — имя выделенного файла или папки локально;
+          • «FTP»   — имя выделенного файла или папки на сервере.
+        """
+        name: Optional[str] = None
+
+        if getattr(self, 'active_tab', 'files') == 'ftp':
+            entries = getattr(self, 'ftp_entries', None) or []
+            idx = getattr(self, 'ftp_selected', 0)
+            if 0 <= idx < len(entries):
+                name = entries[idx][0]
+        else:
+            if self.tree.entries:
+                path, _ = self.tree.entries[self.tree.selected]
+                name = path.name
+
+        if not name:
+            self.log('[i] Ничего не выделено')
+            return
+
+        from ..clipboard import copy_to_clipboard
+        if copy_to_clipboard(name):
+            self.log(f'[БУФЕР] Скопировано: {name}')
+        else:
+            self.log('[ОШБ] Не удалось скопировать в буфер обмена. '
+                     'Установите xclip или wl-copy (Linux), '
+                     'или pyperclip (любая ОС)')
 
     def handle_tree_enter(self):
         if not self.tree.entries:

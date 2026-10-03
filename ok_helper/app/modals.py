@@ -1,9 +1,11 @@
-"""ModalsMixin: help / confirm_fix_all / move_download / edit_name.
+"""ModalsMixin: help / confirm_fix_all / move_download / edit_name / new_folder.
 
 Модалка confirm_ftp_delete живёт в FtpTabMixin — там же, где вся
-логика вкладки FTP, и добавляется в общий _modal_float через
-соответствующую condition (см. _build_common_modals).
+логика вкладки FTP. Модалки help/confirm/move/edit_name/new_folder —
+здесь.
 """
+
+from pathlib import Path
 
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import FormattedText
@@ -12,7 +14,7 @@ from prompt_toolkit.layout import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import TextArea
 
-from ..analyzer import analyze_file
+from ..analyzer import analyze_file, validate_new_folder_name
 from ..translit import transliterate
 
 
@@ -20,9 +22,10 @@ class ModalsMixin:
     def _init_modals(self):
         self._build_common_modals()
         self._build_edit_name_modal()
+        self._build_new_folder_modal()
         self._build_config_modal()
 
-    # ---------- help / confirm / move / ftp_delete ----------
+    # ---------- help / confirm / move ----------
     def _build_common_modals(self):
         self.modal_control = FormattedTextControl(
             text=self._modal_text,
@@ -52,7 +55,7 @@ class ModalsMixin:
         )
         self._style_textarea_for_modal(self.edit_input)
         self._override_tab(self.edit_input)
-        self._override_edit_translit_keys()
+        self._override_translit_keys(self.edit_input)
 
         self.edit_preview_window = Window(
             FormattedTextControl(text=self._edit_preview_text),
@@ -79,19 +82,20 @@ class ModalsMixin:
             width=86, height=8,
         )
 
-    def _override_edit_translit_keys(self):
+    def _override_translit_keys(self, ta: TextArea):
+        """Ctrl+T на TextArea — транслит содержимого в латиницу."""
         custom = KeyBindings()
 
         @custom.add('c-t')
         def _(event):
-            text = self.edit_input.text
+            text = ta.text
             new = transliterate(text)
-            self.edit_input.text = new
-            self.edit_input.cursor_position = len(new)
+            ta.text = new
+            ta.cursor_position = len(new)
             event.app.invalidate()
 
-        old = self.edit_input.control.key_bindings
-        self.edit_input.control.key_bindings = (
+        old = ta.control.key_bindings
+        ta.control.key_bindings = (
             merge_key_bindings([custom, old]) if old else custom
         )
 
@@ -149,6 +153,117 @@ class ModalsMixin:
             self.log(f'[ОШБ] {e}')
         self._close_modal()
         self.tree.refresh()
+        self.invalidate()
+
+    # ---------- new_folder ----------
+    def _build_new_folder_modal(self):
+        self.new_folder_input = TextArea(
+            height=1, prompt='Имя: ', multiline=False,
+            accept_handler=self._apply_new_folder_modal,
+            style='class:modal.bg',
+        )
+        self._style_textarea_for_modal(self.new_folder_input)
+        self._override_tab(self.new_folder_input)
+        self._override_translit_keys(self.new_folder_input)
+
+        self.new_folder_preview_window = Window(
+            FormattedTextControl(text=self._new_folder_preview_text),
+            height=3, char=' ', style='class:modal.bg',
+        )
+
+        body = HSplit([
+            self.new_folder_preview_window,
+            self.new_folder_input,
+            Window(
+                FormattedTextControl(text=lambda: FormattedText([
+                    ('class:dim',
+                     '  Enter — создать,  Esc — отмена,  '
+                     'Ctrl+T — транслит')
+                ])),
+                height=1, char=' ', style='class:modal.bg',
+            ),
+        ], style='class:modal.bg')
+
+        # content = 3 + 1 + 1 = 5; + 4 служебные = 9
+        self._new_folder_float = self._make_modal_float(
+            body=body,
+            title=' ▶ Новая папка — Ctrl+N ',
+            cond=Condition(lambda: self.modal == 'new_folder'),
+            width=86, height=9,
+        )
+
+    def _new_folder_preview_text(self) -> FormattedText:
+        base = getattr(self, '_new_folder_base', None)
+        if base is None:
+            return FormattedText([('', '')])
+        return FormattedText([
+            ('class:dim', '  Где:  '),
+            ('class:cfg.path', f'{base}\n'),
+            ('class:dim', '  Папка создаётся только локально.\n'),
+            ('class:dim',
+             '  На FTP она появится автоматически при загрузке в неё файла.\n'),
+        ])
+
+    def open_new_folder_modal(self):
+        """Открывает модалку создания новой папки.
+
+        Папка создаётся в текущей директории вкладки «Файлы»
+        (то, что показано в поле «Путь:»). На FTP ничего не
+        создаётся — там папка появится автоматически при загрузке
+        в неё файла через F12.
+        """
+        if self.modal is not None:
+            return
+        if getattr(self, 'active_tab', 'files') != 'files':
+            return
+
+        base_dir = (self.path_input.text or '').strip()
+        if not base_dir:
+            self.log('[i] Не задана текущая директория')
+            return
+        base = Path(base_dir).expanduser()
+        if not base.is_dir():
+            self.log(f'[ОШБ] Не директория: {base}')
+            return
+
+        self._new_folder_base = base
+        self.new_folder_input.text = ''
+        self.new_folder_input.cursor_position = 0
+        self.modal = 'new_folder'
+        self.app.layout.focus(self.new_folder_input)
+        self.invalidate()
+
+    def _apply_new_folder_modal(self, buffer):
+        name = buffer.text.strip()
+        base = getattr(self, '_new_folder_base', None)
+        if base is None:
+            self._close_modal()
+            return
+        if not name:
+            self._close_modal()
+            return
+
+        ok, reason = validate_new_folder_name(name)
+        if not ok:
+            self.log(f'[ОШБ] {reason}')
+            return
+
+        target = base / name
+        if target.exists():
+            self.log(f'[ОШБ] Уже существует: {target.name}')
+            return
+
+        try:
+            target.mkdir(parents=False, exist_ok=False)
+            self.log(f'[OK] Создана папка: {target}')
+        except OSError as e:
+            self.log(f'[ОШБ] Не создать папку: {e}')
+            return
+
+        self._close_modal()
+        self.tree.refresh()
+        self.tree.select_by_path(target)
+        self._sync_path_to_selection()
         self.invalidate()
 
     # ---------- move_download ----------
