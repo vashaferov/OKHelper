@@ -3,13 +3,18 @@
 Возможности:
   • своя «Директория» и список содержимого папки на сервере;
   • чек-бокс «Отслеживать папку из вкладки «Файлы»»;
-  • удаление файлов (клавиша Del или кнопка [✕]) с подтверждением —
-    только если ftp_readonly = false.
+  • удаление файлов (Del или [✕]) с подтверждением — при
+    ftp_readonly = false;
+  • ручное обновление содержимого папки — кнопка [↻] или F6;
+  • заполнение набора имён загруженных файлов для пометки локальных
+    копий в дереве (зелёная галочка ✓). Сверка выполняется при
+    каждой загрузке листинга и после каждой успешной загрузки
+    файла — чтобы в локальном дереве была актуальная картина.
 """
 
 import threading
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import FormattedText
@@ -28,7 +33,6 @@ from ..ftp import (
 class FtpTabMixin:
     # ---------- init ----------
     def _init_ftp_tab(self):
-        # Состояние вкладки FTP.
         self.ftp_connected = False
         self.ftp_loading = False
         self.ftp_error = ''
@@ -37,17 +41,14 @@ class FtpTabMixin:
         self.ftp_selected = 0
         self.ftp_follow_files = True
 
-        # Цель для модалки удаления: (имя файла, размер).
-        self._ftp_delete_target: Optional[Tuple[str, int]] = None
+        self._ftp_delete_target = None
 
-        # Поле «Путь:» на вкладке FTP.
         self.ftp_path_input = TextArea(
             height=1, prompt='Путь: ', multiline=False,
             accept_handler=self._ftp_path_submit,
         )
         self._override_tab(self.ftp_path_input)
 
-        # Чек-бокс «Отслеживать папку из вкладки «Файлы»».
         self.ftp_checkbox_control = FormattedTextControl(
             text=self._render_ftp_checkbox,
             focusable=True,
@@ -57,7 +58,6 @@ class FtpTabMixin:
             self.ftp_checkbox_control, height=1, char=' ',
         )
 
-        # Список содержимого папки.
         self.ftp_list_control = FormattedTextControl(
             text=self._render_ftp,
             focusable=True,
@@ -94,6 +94,11 @@ class FtpTabMixin:
             self.open_ftp_delete_modal()
             event.app.invalidate()
 
+        @kb.add('f6')
+        def _(event):
+            self.refresh_ftp_folder()
+            event.app.invalidate()
+
         return kb
 
     def _ftp_checkbox_kb(self) -> KeyBindings:
@@ -110,6 +115,29 @@ class FtpTabMixin:
             event.app.invalidate()
 
         return kb
+
+    # ---------- refresh ----------
+    def refresh_ftp_folder(self):
+        if self.active_tab != 'ftp':
+            return
+        folder = (self.ftp_path_input.text or '').strip()
+        if not folder:
+            self.log('[FTP] Не задана папка для обновления')
+            return
+        if self.ftp_loading:
+            return
+        self.log(f'[FTP] Обновление папки {folder}')
+        self._ftp_load(folder)
+
+    def _click_ftp_refresh(self):
+        def handler(event: MouseEvent):
+            if event.event_type != MouseEventType.MOUSE_UP:
+                return
+            if self.modal is not None:
+                return
+            self.refresh_ftp_folder()
+            self.invalidate()
+        return handler
 
     # ---------- checkbox ----------
     def _render_ftp_checkbox(self) -> FormattedText:
@@ -273,19 +301,39 @@ class FtpTabMixin:
             self.ftp_error = err
             self.ftp_connected = False
             self.ftp_entries = []
+            self._ftp_sync_folder = ''
+            self._ftp_sync_names = set()
             self.log(f'[FTP] Ошибка: {err}')
         else:
             self.ftp_connected = True
             self.ftp_error = ''
             self.ftp_entries = entries
             self.ftp_selected = 0
+
+            # Сверка для пометки локальных файлов в дереве «Файлы».
+            # Соответствие — только для одноуровневых папок.
+            if folder and '/' not in folder:
+                self._ftp_sync_folder = folder
+                self._ftp_sync_names = {
+                    n for n, is_d, _ in entries if not is_d
+                }
+            else:
+                self._ftp_sync_folder = ''
+                self._ftp_sync_names = set()
+
+            # Пересобираем локальное дерево — пометки ✓ в нём
+            # зависят от свежих sync-данных.
+            try:
+                self.tree.refresh()
+            except Exception:
+                pass
+
             self.log(f'[FTP] Открыта папка {folder} '
                      f'({len(entries)} элементов)')
         self.invalidate()
 
     # ---------- delete ----------
     def _ftp_delete_allowed(self) -> bool:
-        """Удаление разрешено только когда ftp_readonly = false."""
         return not bool(self.config.get('ftp_readonly', False))
 
     def open_ftp_delete_modal(self):
@@ -313,7 +361,6 @@ class FtpTabMixin:
         self.invalidate()
 
     def _ftp_delete_modal_text(self) -> FormattedText:
-        """Содержимое модалки подтверждения удаления."""
         if not self._ftp_delete_target:
             return FormattedText([('', '')])
         name, size = self._ftp_delete_target
@@ -347,7 +394,6 @@ class FtpTabMixin:
         name, _ = self._ftp_delete_target
         folder = self.ftp_folder
 
-        # Ещё раз проверяем режим — конфиг могли изменить в F10.
         if not self._ftp_delete_allowed():
             self.log(f'[FTP] Удаление «{name}» запрещено: '
                      'включён режим эмуляции')
@@ -389,7 +435,13 @@ class FtpTabMixin:
             self.log(f'[FTP] Ошибка удаления {filename}: {err}')
         else:
             self.log(f'[FTP] Удалён: {folder}/{filename}')
-        # Обновляем содержимое текущей папки.
+            # Убираем имя из локального кеша sync, если папка совпадает.
+            if self._ftp_sync_folder == folder:
+                self._ftp_sync_names.discard(filename)
+                try:
+                    self.tree.refresh()
+                except Exception:
+                    pass
         if folder == self.ftp_folder:
             self._ftp_load(folder)
         self.invalidate()
@@ -412,6 +464,12 @@ class FtpTabMixin:
             except Exception:
                 pass
         else:
+            # При возврате на «Файлы» пересобираем дерево, чтобы
+            # пометки ✓ точно отражали последний полученный листинг.
+            try:
+                self.tree.refresh()
+            except Exception:
+                pass
             try:
                 self.app.layout.focus(self.tree_window)
             except Exception:
@@ -486,7 +544,6 @@ class FtpTabMixin:
                 return
             if self.modal is not None:
                 return
-            # Выделяем строку этого файла и открываем модалку.
             for i, (n, is_d, _) in enumerate(self.ftp_entries):
                 if n == name and not is_d:
                     self.ftp_selected = i

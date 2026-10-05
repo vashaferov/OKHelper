@@ -16,18 +16,15 @@ from ..theme import build_style
 class UIMixin:
     # ---------- layout ----------
     def _init_layout(self):
-        # Левая колонка — журнал.
         left = HSplit([
             self._titled('Журнал', self.log_window, 'log'),
         ])
 
-        # --- вкладка «Файлы» ---
         files_content = HSplit([
             self._titled('Директория — Enter', self.path_input, 'path'),
             Frame(self.tree_window, title=self._files_title),
         ])
 
-        # --- вкладка «FTP» ---
         ftp_content = HSplit([
             Frame(self.ftp_top_window, title=self._ftp_top_title),
             Frame(self.ftp_list_window, title=self._ftp_list_title),
@@ -59,6 +56,7 @@ class UIMixin:
                 self._modal_float,
                 self._edit_float,
                 self._new_folder_float,
+                self._move_float,
                 self._config_float,
                 self._upload_float,
             ],
@@ -66,8 +64,7 @@ class UIMixin:
 
     # ---------- titles ----------
     def _files_title(self):
-        return [('class:title',
-                 ' Файлы — Ctrl+N новая папка, Ctrl+Y копировать имя ')]
+        return [('class:title', ' Файлы ')]
 
     def _ftp_top_title(self):
         return [('class:title',
@@ -76,12 +73,18 @@ class UIMixin:
     def _ftp_list_title(self):
         folder = (self.ftp_path_input.text or '').strip() or '—'
         if self.ftp_loading:
-            text = f' FTP — {folder} (загрузка…) '
+            state = ' (загрузка…)'
         elif self.ftp_connected:
-            text = f' FTP — {folder} '
+            state = ''
         else:
-            text = ' FTP — не подключено '
-        return [('class:title', text)]
+            state = ' — не подключено'
+
+        return [
+            ('class:title', ' FTP '),
+            ('class:btn.refresh', ' ↻ ',
+             self._click_ftp_refresh()),
+            ('class:title', f' — {folder}{state} '),
+        ]
 
     # ---------- tab bar ----------
     def _tabs_bar(self) -> Window:
@@ -141,14 +144,18 @@ class UIMixin:
             self.switch_tab(other)
             event.app.invalidate()
 
-        # Ctrl+N — создать новую папку (только на вкладке «Файлы»).
         @kb.add('c-n')
         def _(event):
             if self.modal is None and self.active_tab == 'files':
                 self.open_new_folder_modal()
             event.app.invalidate()
 
-        # Ctrl+Y — скопировать имя выделенного элемента в буфер.
+        @kb.add('c-x')
+        def _(event):
+            if self.modal is None and self.active_tab == 'files':
+                self.open_move_modal()
+            event.app.invalidate()
+
         @kb.add('c-y')
         def _(event):
             if self.modal is None:
@@ -198,10 +205,7 @@ class UIMixin:
         @kb.add('f6')
         def _(event):
             if self.active_tab == 'ftp':
-                folder = (self.ftp_path_input.text or '').strip()
-                if folder:
-                    self._ftp_load(folder)
-                    self.log(f'[FTP] Обновление папки {folder}')
+                self.refresh_ftp_folder()
             else:
                 self.scan_dir(self.watch_dir)
                 self.tree.refresh()
@@ -232,6 +236,9 @@ class UIMixin:
                 self.open_config_modal()
             event.app.invalidate()
 
+        # Ctrl+L — очистить журнал. Это основная комбинация:
+        # F11 перехватывается большинством терминалов как "fullscreen".
+        @kb.add('c-l')
         @kb.add('f11')
         def _(event):
             with self.lock:

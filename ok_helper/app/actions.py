@@ -1,6 +1,7 @@
 """ActionsMixin: fix, fix_all, undo, open, scan, path, copy."""
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -35,9 +36,7 @@ class ActionsMixin:
     def copy_selected_name(self):
         """Копирует имя выделенного элемента в системный буфер обмена.
 
-        Работает на обеих вкладках:
-          • «Файлы» — имя выделенного файла или папки локально;
-          • «FTP»   — имя выделенного файла или папки на сервере.
+        Работает для файлов И для папок, на обеих вкладках.
         """
         name: Optional[str] = None
 
@@ -130,13 +129,18 @@ class ActionsMixin:
         self.invalidate()
 
     def undo(self):
+        """Отменяет последнее переименование или перенос.
+
+        Используем shutil.move (а не Path.rename), чтобы корректно
+        откатывать перенос между разными файловыми системами.
+        """
         if not self.undo_stack:
             self.log('[i] Нечего отменять')
             return
         new_path, old_path = self.undo_stack.pop()
         try:
-            new_path.rename(old_path)
-            self.log(f'[ОТМЕНА] {new_path.name} -> {old_path.name}')
+            shutil.move(str(new_path), str(old_path))
+            self.log(f'[ОТМЕНА] {new_path.name} -> {old_path}')
         except OSError as e:
             self.log(f'[ОШБ] Отмена: {e}')
         self.tree.refresh()

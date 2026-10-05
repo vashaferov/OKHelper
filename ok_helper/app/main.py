@@ -46,6 +46,11 @@ async def run(initial_dir: Path, config: dict):
         app.start_downloads_watch()
 
     app.restart_watch()
+
+    # Стартовые окна: на первом запуске — настройки, затем подсказки;
+    # далее — подсказки, если включён чек-бокс help_visible_at_start.
+    app.schedule_startup_modals()
+
     try:
         await app.app.run_async()
     finally:

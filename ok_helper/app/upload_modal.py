@@ -180,7 +180,6 @@ class UploadMixin:
         self._upload_target = None
         self._upload_status = ('', '')
         self.modal = None
-        # Возвращаем фокус в активную панель текущей вкладки.
         self._focus_main_panel()
         self.invalidate()
 
@@ -255,8 +254,30 @@ class UploadMixin:
                              f'имитация завершена')
                 else:
                     final = f'[FTP] Успешно: {folder}/{src.name}'
+                    # Помечаем локальный файл как залитый — синхронизируем
+                    # дерево «Файлы» с состоянием FTP сразу, без ручного
+                    # обновления листинга.
+                    self.loop.call_soon_threadsafe(
+                        self._on_upload_success, folder, src.name)
                 self.loop.call_soon_threadsafe(self.log, final)
         except Exception as e:
             if self.loop is not None:
                 self.loop.call_soon_threadsafe(
                     self.log, f'[FTP] Ошибка: {e}')
+
+    # ---------- sync hook ----------
+    def _on_upload_success(self, folder: str, filename: str):
+        """Вызывается в главном потоке после успешной загрузки файла
+        на FTP. Обновляет локальный кеш sync и пересобирает дерево,
+        чтобы файл сразу помечался галочкой ✓.
+
+        Совпадение папки — по имени (одноуровневая проверка, как и в
+        FtpTabMixin._ftp_apply_result).
+        """
+        if folder and '/' not in folder and self._ftp_sync_folder == folder:
+            self._ftp_sync_names.add(filename)
+            try:
+                self.tree.refresh()
+            except Exception:
+                pass
+        self.invalidate()

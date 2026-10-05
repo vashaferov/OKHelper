@@ -2,7 +2,6 @@
 
 Файл config.toml лежит в системной папке конфигов:
   Linux:   $XDG_CONFIG_HOME/ok-helper-tui/config.toml
-           (или ~/.config/ok-helper-tui/config.toml)
   macOS:   ~/Library/Application Support/ok-helper-tui/config.toml
   Windows: %APPDATA%\\ok-helper-tui\\config.toml
 """
@@ -27,10 +26,13 @@ DEFAULT_CONFIG = {
     'ftp_user': '',
     'ftp_password': '',
     'ftp_path': '/',
-    # Режим эмуляции FTP: подключение и чтение реальные, но любые
-    # изменения на сервере (MKD / STOR / DELE) не выполняются.
-    # Удобно для проверки имён папок и прав без риска.
     'ftp_readonly': False,
+    # Показывать ли окно подсказок (F1) при каждом запуске.
+    # Управляется чек-боксом в самом окне подсказок.
+    'help_visible_at_start': True,
+    # Первый запуск сервиса. После первого запуска ставится в False,
+    # чтобы не показывать окно настроек при каждом старте.
+    'first_run': True,
 }
 
 
@@ -141,6 +143,9 @@ def load_config() -> dict:
 
     cfg['watch_downloads'] = bool(cfg.get('watch_downloads', False))
     cfg['ftp_readonly'] = bool(cfg.get('ftp_readonly', False))
+    cfg['help_visible_at_start'] = bool(
+        cfg.get('help_visible_at_start', True))
+    cfg['first_run'] = bool(cfg.get('first_run', True))
 
     for k in ('root_dir', 'downloads_dir', 'ftp_host', 'ftp_user',
               'ftp_password', 'ftp_path'):
@@ -173,6 +178,8 @@ def save_config(cfg: dict):
 
     watch = bool(cfg.get('watch_downloads', False))
     readonly = bool(cfg.get('ftp_readonly', False))
+    help_at_start = bool(cfg.get('help_visible_at_start', True))
+    first_run = bool(cfg.get('first_run', True))
 
     lines = [
         '# Конфиг ok-helper-tui',
@@ -206,6 +213,17 @@ def save_config(cfg: dict):
         f'ftp_password    = {_toml_value("ftp_password", cfg.get("ftp_password", ""))}',
         f'ftp_path        = {_toml_value("ftp_path", cfg.get("ftp_path", "/"))}',
         f'ftp_readonly    = {_toml_value("ftp_readonly", readonly)}',
+        '',
+        '# --- Окна при старте ---',
+        '# help_visible_at_start — показывать окно подсказок (F1)',
+        '#                         при каждом запуске сервиса;',
+        '#                         переключается чек-боксом в самом окне.',
+        '# first_run             — внутренний флаг: показывать ли',
+        '#                         окно настроек при запуске.',
+        '#                         Ставится автоматически.',
+        '',
+        f'help_visible_at_start = {_toml_value("help_visible_at_start", help_at_start)}',
+        f'first_run             = {_toml_value("first_run", first_run)}',
         '',
     ]
     try:

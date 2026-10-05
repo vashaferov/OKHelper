@@ -18,10 +18,10 @@ from watchdog.observers import Observer
 
 
 _STATUS_HINTS: List[Tuple[str, str, str, int]] = [
-    ('F1',  'Спр',   'Справка',     100),
-    ('^Q',  'Вых',   'Выход',       100),
-    ('^Z',  'Отм',   'Отмена',       70),
-    ('^C',  'Вых',   'Выход',        50),
+    ('F1',      'Спр', 'Справка', 100),
+    ('Ctrl+Q',  'Вых', 'Выход',   100),
+    ('Ctrl+Z',  'Отм', 'Отмена',   70),
+    ('Ctrl+C',  'Вых', 'Выход',    50),
 ]
 
 
@@ -34,10 +34,30 @@ class NavMixin:
             text=self.render_tree,
             focusable=True,
             key_bindings=self.tree_kb,
-            get_cursor_position=lambda: Point(0, self.tree.selected),
+            get_cursor_position=self._tree_cursor_position,
         )
         self.tree_window = Window(self.tree_control)
 
+    # ---------- visual position ----------
+    def _tree_cursor_position(self) -> Point:
+        entries = self.tree.entries
+        if not entries:
+            return Point(x=0, y=0)
+        sel = self.tree.selected
+        if sel >= len(entries):
+            sel = len(entries) - 1
+
+        y = 1
+        y += sel
+
+        for i in range(sel):
+            p, _ = entries[i]
+            if p.is_dir() and p in self.tree.expanded:
+                y += 1
+
+        return Point(x=0, y=y)
+
+    # ---------- tree key bindings ----------
     def _build_tree_kb(self) -> KeyBindings:
         kb = KeyBindings()
 
@@ -84,13 +104,6 @@ class NavMixin:
 
     # ---------- actions ----------
     def _sync_path_to_selection(self):
-        """Обновляет поле «Путь:» на вкладке «Файлы» при навигации по
-        дереву.
-
-        Запрос на FTP НЕ выполняется: синхронизация вкладки FTP
-        происходит только в момент переключения на неё (см.
-        FtpTabMixin.switch_tab / _ftp_follow_from_files).
-        """
         if not self.tree.entries:
             return
         path, _ = self.tree.entries[self.tree.selected]
@@ -109,7 +122,7 @@ class NavMixin:
         self.app.layout.focus(self.tree_window)
         self.invalidate()
 
-    # ---------- click handlers ----------
+    # ---------- click handlers: дерево ----------
     def _click_row(self, path: Path):
         def handler(event: MouseEvent):
             if event.event_type != MouseEventType.MOUSE_UP:
@@ -181,11 +194,76 @@ class NavMixin:
             self.open_upload_modal()
         return handler
 
-    # ---------- rendering ----------
+    def _click_new_folder_in(self, parent: Path):
+        def handler(event: MouseEvent):
+            if event.event_type != MouseEventType.MOUSE_UP:
+                return
+            if self.modal is not None:
+                return
+            if getattr(self, 'active_tab', 'files') != 'files':
+                return
+            self.open_new_folder_modal(parent)
+        return handler
+
+    # ---------- click handlers: статус-бар ----------
+    def _click_filter(self):
+        def handler(event: MouseEvent):
+            if event.event_type != MouseEventType.MOUSE_UP:
+                return
+            if self.modal is not None:
+                return
+            from ..models import FilterMode
+            self.tree.filter_mode = (
+                FilterMode.ERRORS
+                if self.tree.filter_mode == FilterMode.ALL
+                else FilterMode.ALL
+            )
+            self.tree.refresh()
+            self.log(f'[i] Фильтр: {self.tree.filter_mode.value}')
+            self.invalidate()
+        return handler
+
+    def _click_sort(self):
+        def handler(event: MouseEvent):
+            if event.event_type != MouseEventType.MOUSE_UP:
+                return
+            if self.modal is not None:
+                return
+            from ..models import SortMode
+            modes = list(SortMode)
+            idx = modes.index(self.tree.sort_mode)
+            self.tree.sort_mode = modes[(idx + 1) % len(modes)]
+            self.tree.refresh()
+            self.log(f'[i] Сортировка: {self.tree.sort_mode.value}')
+            self.invalidate()
+        return handler
+
+    # ---------- sync с FTP ----------
+    def _is_uploaded_to_ftp(self, path: Path) -> bool:
+        folder = self._ftp_sync_folder
+        if not folder or '/' in folder:
+            return False
+        if path.parent.name != folder:
+            return False
+        return path.name in self._ftp_sync_names
+
+    # ---------- tree rendering ----------
+    def _append_new_folder_row(self, frags: list, parent: Path, depth: int):
+        indent = '  ' * depth
+        frags.append(('', indent + '  '))
+        frags.append(('class:btn.new', ' [+ Папка] ',
+                      self._click_new_folder_in(parent)))
+        frags.append(('class:dim', '   Ctrl+N ',
+                      self._click_new_folder_in(parent)))
+        frags.append(('', '\n'))
+
     def render_tree(self) -> FormattedText:
-        frags = []
+        frags: list = []
+
+        self._append_new_folder_row(frags, self.tree.root, depth=0)
+
         if not self.tree.entries:
-            frags.append(('class:dim', '  (пусто)'))
+            frags.append(('class:dim', '  (пусто)\n'))
             return FormattedText(frags)
 
         for i, (path, depth) in enumerate(self.tree.entries):
@@ -198,6 +276,9 @@ class NavMixin:
                     ' class:tree.sel' if selected else '')
                 frags.append((style, f'{indent}{arrow} {path.name}/\n',
                               self._click_row(path)))
+                if path in self.tree.expanded:
+                    self._append_new_folder_row(frags, path,
+                                                depth=depth + 1)
                 continue
 
             info = self.tree.info(path)
@@ -205,6 +286,9 @@ class NavMixin:
             style = base + (' class:tree.sel' if selected else '')
             frags.append((style, f'{indent}  {path.name}',
                           self._click_row(path)))
+
+            if self._is_uploaded_to_ftp(path):
+                frags.append(('class:tree.uploaded', ' ✓'))
 
             if is_uploadable(path, info):
                 frags.append(('', '  '))
@@ -266,14 +350,18 @@ class NavMixin:
         total = sum(1 for p, _ in entries if p.is_file())
         errors = sum(1 for p, _ in entries
                      if p.is_file() and self.tree.is_error(p))
+        uploaded = sum(1 for p, _ in entries
+                       if p.is_file() and self._is_uploaded_to_ftp(p))
 
         frags: List[tuple] = [
             ('class:status.sep', '  '),
             ('class:status.key', 'фильтр: '),
-            ('class:status.val', self.tree.filter_mode.value),
+            ('class:status.val', self.tree.filter_mode.value,
+             self._click_filter()),
             ('class:status.sep', '   '),
             ('class:status.key', 'сорт: '),
-            ('class:status.val', self.tree.sort_mode.value),
+            ('class:status.val', self.tree.sort_mode.value,
+             self._click_sort()),
             ('class:status.sep', '   '),
             ('class:status.key', 'файлов: '),
             ('class:status.val', str(total)),
@@ -283,6 +371,11 @@ class NavMixin:
             frags.append(('class:status.err', f'ошибок: {errors}'))
         else:
             frags.append(('class:status.ok', 'ошибок: 0'))
+
+        if uploaded:
+            frags.append(('class:status.sep', '   '))
+            frags.append(('class:status.ok', f'✓ на FTP: {uploaded}'))
+
         frags.extend([
             ('class:status.sep', '   '),
             ('class:status.key', 'отм: '),
@@ -306,7 +399,7 @@ class NavMixin:
                     frags.append(('class:status.sep', '   → '))
                     frags.append(('class:status.sugg', info['new_name']))
 
-        used_left = sum(len(t) for _, t in frags)
+        used_left = sum(len(f[1]) for f in frags)
         width = self._terminal_width()
         available = max(0, width - used_left - 4)
         hint = self._build_hint(available)

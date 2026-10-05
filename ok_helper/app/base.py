@@ -16,9 +16,10 @@ from prompt_toolkit.layout import (
 )
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import Dimension as D
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.widgets import Frame, TextArea
 
-from config import config_path
+from config import config_path, save_config
 from ..models import FileTree
 
 
@@ -46,6 +47,9 @@ class AppBase:
 
     DOUBLE_CLICK_INTERVAL = 0.4
 
+    MODAL_HEIGHT = 24
+    HELP_HEADER_LINES = 2
+
     HELP_TEXT = (
         '  F1   Справка\n'
         '  F2   Фильтр: Все ↔ Только ошибки\n'
@@ -57,21 +61,47 @@ class AppBase:
         '  F8   Показать очередь файлов из Загрузок\n'
         '  F9   Вкл/выкл мониторинг папки Загрузок (сохраняется)\n'
         '  F10  Открыть редактор конфига\n'
-        '  F11  Очистить журнал\n'
+        ' Ctrl+L  Очистить журнал (или F11, если терминал пропускает)\n'
         '  F12  Загрузить выделенный файл на FTP (только «Файлы»)\n'
-        ' ^Z    Отменить последнее переименование\n'
-        ' ^N    Создать новую папку (вкладка «Файлы»)\n'
-        ' ^Y    Скопировать имя выделенного элемента в буфер обмена\n'
-        ' ^C    Выход (или ^Q)\n'
+        ' Ctrl+Z  Отменить последнее переименование/перенос\n'
+        ' Ctrl+N  Создать новую папку (вкладка «Файлы»)\n'
+        ' Ctrl+X  Перенести выделенный файл в другую папку\n'
+        ' Ctrl+Y  Скопировать имя выделенного элемента в буфер\n'
+        ' Ctrl+C  Выход (или Ctrl+Q)\n'
+        '\n'
+        ' Справка (это окно):\n'
+        '   Прокрутка — PageUp / PageDown, ↑ / ↓, Home / End\n'
+        '   Чек-бокс сверху — включать/выключать показ при старте.\n'
         '\n'
         ' Создание папок:\n'
-        '   Ctrl+N на вкладке «Файлы» создаёт папку ЛОКАЛЬНО,\n'
-        '   в текущей открытой директории. На FTP папка появится\n'
-        '   автоматически при загрузке в неё файла через F12.\n'
+        '   Кнопка [+ Папка] в дереве — на каждом уровне. Клик\n'
+        '   открывает модалку создания локальной папки.\n'
+        '   Ctrl+N — то же действие для текущей директории.\n'
+        '   Если папка создаётся в КОРНЕ (root_dir из конфига):\n'
+        '     – имя предзаполняется текущей датой «ГГГГ-ММ-ДД_»;\n'
+        '     – доступен чек-бокс «Создать внутри 10-Tracks».\n'
+        '   На FTP папка появится автоматически при загрузке\n'
+        '   в неё файла через F12.\n'
+        '\n'
+        ' Перенос файлов между папками:\n'
+        '   Ctrl+X или кнопка [⇢ Перенести в другую папку] внутри\n'
+        '   окна F7 — открывается модалка переноса. Введите путь\n'
+        '   назначения (абсолютный или относительно текущей\n'
+        '   директории) и нажмите Enter.\n'
+        '   Работает ТОЛЬКО для локального хранилища. Отменяется\n'
+        '   через Ctrl+Z.\n'
+        '\n'
+        ' Синхронизация с FTP:\n'
+        '   После загрузки списка файлов из папки на FTP-вкладке\n'
+        '   сервис помечает локальные файлы с такими же именами\n'
+        '   зелёной галочкой ✓ в дереве — значит, файл уже залит\n'
+        '   на сервер. Проверка — по имени файла и по совпадению\n'
+        '   имени родительской папки с папкой на FTP.\n'
         '\n'
         ' Копирование имени:\n'
-        '   Ctrl+Y копирует имя выделенного элемента в системный\n'
-        '   буфер обмена. Работает на обеих вкладках.\n'
+        '   Ctrl+Y копирует имя выделенного элемента (файла ИЛИ\n'
+        '   папки) в системный буфер обмена. Работает на обеих\n'
+        '   вкладках.\n'
         '\n'
         ' Вкладки правой панели:\n'
         '   Ctrl+→ / Ctrl+← или клик по вкладке — переключение.\n'
@@ -82,8 +112,12 @@ class AppBase:
         '   подматывается к нижней строке.\n'
         '\n'
         ' Транслит кириллицы:\n'
-        '   Ctrl+T в поле ввода имени (F7, Ctrl+N) или папки (F12)\n'
-        '   заменит введённый текст на латиницу по ГОСТ 7.79-2000.\n'
+        '   Ctrl+T в поле ввода имени (F7, Ctrl+N, Ctrl+X) или\n'
+        '   папки (F12) заменит введённый текст на латиницу.\n'
+        '\n'
+        ' Статус-бар (внизу):\n'
+        '   Значения «фильтр» и «сорт» кликабельны — клик мышью\n'
+        '   переключает соответствующий режим.\n'
         '\n'
         ' Конфиг (F10):\n'
         '   root_dir / downloads_dir / watch_downloads / theme\n'
@@ -112,6 +146,10 @@ class AppBase:
         '   • файлы из папки 10-Tracks НЕ отправляются.\n'
         '   Папка назначения — строго ГГГГ-ММ-ДД_Место.\n'
         '   Пустая папка и корень сервера не принимаются.\n'
+        '\n'
+        ' Обновление содержимого FTP:\n'
+        '   Кнопка [↻] в заголовке панели FTP или клавиша F6\n'
+        '   (когда активна вкладка FTP).\n'
         '\n'
         ' Мониторинг загрузок (F8/F9):\n'
         '   Y / Enter — перенести,  N — пропустить,  Esc — позже\n'
@@ -143,6 +181,16 @@ class AppBase:
         self._last_click_time: float = 0.0
 
         self._new_folder_base: Optional[Path] = None
+        self._new_folder_is_root: bool = False
+        self._new_folder_with_tracks: bool = False
+
+        self._move_target: Optional[Path] = None
+
+        self._ftp_sync_folder: str = ''
+        self._ftp_sync_names: set = set()
+
+        self._pending_help_after_config: bool = False
+        self._help_scroll_offset: int = 0
 
     # ---------- inputs ----------
     def _init_inputs(self):
@@ -163,6 +211,10 @@ class AppBase:
             focusable=True,
             key_bindings=self._log_kb(),
         )
+        # Ползунок прокрутки (ScrollbarMargin) намеренно не подключён:
+        # в prompt_toolkit он только отображает позицию и не реагирует
+        # на клики/перетаскивание. Прокрутка — колесо, PgUp/PgDn,
+        # Home/End.
         self.log_window = Window(self.log_control, wrap_lines=True)
 
     def _level_from_msg(self, msg: str) -> str:
@@ -206,23 +258,6 @@ class AppBase:
         return FormattedText(frags)
 
     def _log_rendered_lines(self) -> int:
-        """Приблизительное число отрисованных строк журнала.
-
-        Считает, сколько строк займёт содержимое журнала с учётом
-        wrap_lines. Нужно, потому что vertical_scroll в prompt_toolkit
-        измеряется в отрендеренных строках, а не в записях. Одна
-        запись может занять несколько строк, если она длинная.
-
-        Формат одной записи: «HH:MM:SS  » (10 символов) плюс, если
-        есть тег, «[TAG]».ljust(10) (10 символов) плюс текст сообщения
-        без тега. Если тега нет — «HH:MM:SS  » плюс весь текст.
-
-        Оценка округляется вверх — лучше переоценить, чем недооценить:
-        prompt_toolkit аккуратно обрезает excessive vertical_scroll
-        при рендере.
-        """
-        # Ширина окна журнала. Если рендер ещё не случался —
-        # берём ширину терминала как fallback.
         width = 0
         try:
             info = self.log_window.render_info
@@ -244,7 +279,6 @@ class AppBase:
         for ts, level, msg in snapshot:
             m = _LOG_TAG_RE.match(msg)
             if m:
-                # ts(8) + '  '(2) + tag.ljust(10)(10) + msg без тега
                 text_len = 8 + 2 + 10 + (len(msg) - m.end())
             else:
                 text_len = 8 + 2 + len(msg)
@@ -477,6 +511,12 @@ class AppBase:
             self.open_new_folder_modal()
             event.app.invalidate()
 
+        @custom.add('c-x', filter=Condition(
+            lambda: self.modal is None and self.active_tab == 'files'))
+        def _(event):
+            self.open_move_modal()
+            event.app.invalidate()
+
         @custom.add('c-y', filter=Condition(lambda: self.modal is None))
         def _(event):
             self.copy_selected_name()
@@ -516,6 +556,8 @@ class AppBase:
             return [self.edit_input.window]
         if self.modal == 'new_folder':
             return [self.new_folder_input.window]
+        if self.modal == 'move_file':
+            return [self.move_input.window]
         if self.modal == 'upload':
             return [self.upload_name_input.window]
         if self.modal in ('help', 'confirm_fix_all', 'move_download',
@@ -553,20 +595,32 @@ class AppBase:
 
     def _open_modal(self, name: str):
         self.modal = name
+        if name == 'help':
+            self._help_scroll_offset = 0
         self.app.layout.focus(self.modal_window)
         self.invalidate()
 
     def _close_modal(self):
+        was_config = (self.modal == 'edit_config')
         self.modal = None
         self._pending_fix_list = []
         self._edit_target = None
         self._new_folder_base = None
+        self._new_folder_is_root = False
+        self._new_folder_with_tracks = False
+        self._move_target = None
+
+        if was_config and self._pending_help_after_config:
+            self._pending_help_after_config = False
+            self._open_modal('help')
+            return
+
         self._focus_main_panel()
         self.invalidate()
 
     def _modal_title(self) -> str:
         if self.modal == 'help':
-            return ' ▶ Справка — F1 или Esc '
+            return ' ▶ Справка — ↑↓ PgUp/PgDn, F1/Esc '
         if self.modal == 'confirm_fix_all':
             return ' ▶ Подтверждение — Enter/Y, Esc/N '
         if self.modal == 'confirm_ftp_delete':
@@ -577,9 +631,99 @@ class AppBase:
             return f' ▶ Файл из Загрузок{more} — Y/N/Esc '
         return ''
 
+    # ---------- help scroll ----------
+    def _help_visible_lines(self) -> int:
+        return max(5, self.MODAL_HEIGHT - 4 - self.HELP_HEADER_LINES)
+
+    def _help_lines(self) -> List[str]:
+        return self.HELP_TEXT.split('\n')
+
+    def _help_max_scroll(self) -> int:
+        return max(0, len(self._help_lines()) - self._help_visible_lines())
+
+    def _help_scroll(self, delta: int):
+        if self.modal != 'help':
+            return
+        max_off = self._help_max_scroll()
+        off = self._help_scroll_offset + delta
+        if off < 0:
+            off = 0
+        if off > max_off:
+            off = max_off
+        self._help_scroll_offset = off
+
+    def _help_scroll_page(self, direction: int):
+        self._help_scroll(direction * self._help_visible_lines())
+
+    def _help_scroll_home(self):
+        self._help_scroll_offset = 0
+
+    def _help_scroll_end(self):
+        self._help_scroll_offset = self._help_max_scroll()
+
+    # ---------- help-modal text ----------
+    def _help_modal_text(self) -> FormattedText:
+        show = bool(self.config.get('help_visible_at_start', True))
+        marker = 'x' if show else ' '
+        handler = self._click_toggle_help_visible()
+
+        lines = self._help_lines()
+        total = len(lines)
+        visible = self._help_visible_lines()
+        max_off = max(0, total - visible)
+        off = self._help_scroll_offset
+        if off < 0:
+            off = 0
+        if off > max_off:
+            off = max_off
+        self._help_scroll_offset = off
+
+        frags: list = [
+            ('class:modal', '  '),
+            ('class:btn', f'[{marker}]', handler),
+            ('class:modal', ' Показывать при старте', handler),
+            ('class:dim', '   (клик или Пробел)'),
+            ('class:modal', '\n'),
+        ]
+
+        if total > visible:
+            tail = total - visible - off
+            if off == 0:
+                info = f'▼  строки 1-{visible} из {total}  (PgDn / ↓)'
+            elif tail <= 0:
+                info = f'▲  строки {off + 1}-{total} из {total}  (PgUp / ↑)'
+            else:
+                info = (f'▲▼ строки {off + 1}-{off + visible} '
+                        f'из {total}  (PgUp/PgDn)')
+        else:
+            info = ''
+        frags.append(('class:dim', f'  {info}\n'))
+
+        sub = lines[off:off + visible]
+        frags.append(('class:modal', '\n'.join(sub)))
+        return FormattedText(frags)
+
+    def _click_toggle_help_visible(self):
+        def handler(event: MouseEvent):
+            if event.event_type != MouseEventType.MOUSE_UP:
+                return
+            self.toggle_help_visible_at_start()
+        return handler
+
+    def toggle_help_visible_at_start(self):
+        new_val = not bool(self.config.get('help_visible_at_start', True))
+        self.config['help_visible_at_start'] = new_val
+        try:
+            save_config(self.config)
+        except Exception:
+            pass
+        self.log('[НАСТР] Подсказка при старте: '
+                 f'{"вкл" if new_val else "выкл"}')
+        self.invalidate()
+
     def _modal_text(self) -> FormattedText:
         if self.modal == 'help':
-            return FormattedText([('class:modal', self.HELP_TEXT)])
+            return self._help_modal_text()
         if self.modal == 'confirm_fix_all':
             n = len(self._pending_fix_list)
             lines = [f'  Файлов к переименованию (уверенные): {n}', '']
@@ -661,6 +805,42 @@ class AppBase:
                 self.accept_move()
             else:
                 self._close_modal()
+            event.app.invalidate()
+
+        @kb.add('space')
+        def _(event):
+            if self.modal == 'help':
+                self.toggle_help_visible_at_start()
+            event.app.invalidate()
+
+        @kb.add('pageup')
+        def _(event):
+            self._help_scroll_page(-1)
+            event.app.invalidate()
+
+        @kb.add('pagedown')
+        def _(event):
+            self._help_scroll_page(1)
+            event.app.invalidate()
+
+        @kb.add('up')
+        def _(event):
+            self._help_scroll(-1)
+            event.app.invalidate()
+
+        @kb.add('down')
+        def _(event):
+            self._help_scroll(1)
+            event.app.invalidate()
+
+        @kb.add('home')
+        def _(event):
+            self._help_scroll_home()
+            event.app.invalidate()
+
+        @kb.add('end')
+        def _(event):
+            self._help_scroll_end()
             event.app.invalidate()
 
         return kb

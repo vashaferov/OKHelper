@@ -97,12 +97,18 @@ class TestNormalizeCallsign:
         # идемпотентность
         ('Lisa01',     'Lisa01'),
 
-        # если база оканчивается цифрой — номер уже в ней,
-        # хвостовая группа _N / -N НЕ трогается
+        # номер в СЕРЕДИНЕ позывного (с суффиксом после)
+        ('Lisa_03_Test',  'Lisa03_Test'),
+        ('Lisa_04_1',     'Lisa04_1'),
+        ('lisa_03_test',  'Lisa03_test'),
+        ('lisa-05-test',  'Lisa05-test'),
+
+        # если база оканчивается цифрой — хвостовая группа _N/-N
+        # НЕ трогается
         ('Lisa01_1',   'Lisa01_1'),
         ('Lisa01_12',  'Lisa01_12'),
         ('Lisa01-1',   'Lisa01-1'),
-        ('lisa01_1',   'Lisa01_1'),  # только капитализируем
+        ('lisa01_1',   'Lisa01_1'),
         ('Lisa99_1',   'Lisa99_1'),
 
         # если база не чисто буквенная и разделителя нет —
@@ -125,7 +131,8 @@ class TestNormalizeCallsign:
 
     def test_idempotent(self):
         for x in ('lisa', 'lisa_1', 'lisa1', 'Lisa01',
-                  'ivan_petr_2', 'Lisa01_1', 'lisa01_1'):
+                  'ivan_petr_2', 'Lisa01_1', 'lisa01_1',
+                  'Lisa_03_Test', 'Lisa_04_1', 'Lisa03_Test'):
             once = normalize_callsign(x)
             assert normalize_callsign(once) == once, x
 
@@ -144,10 +151,11 @@ class TestCanonicalFormat:
         '20260923_Ivan01.plt',
         '20260923_A1B2.gpx',
         '20260923_X.plt',
-        # база оканчивается цифрой — номер уже в ней,
-        # хвостовая группа _N не трогается
         '20260923_Lisa01_1.gpx',
         '20260923_Lisa01_12.plt',
+        # номер в середине — уже валидные имена
+        '20261004_Lisa03_Test.gpx',
+        '20261004_Lisa04_1.gpx',
     ])
     def test_already_valid(self, tmp_path, name):
         info = analyze_file(touch(tmp_path / name))
@@ -210,12 +218,28 @@ class TestTranslitCallsign:
         assert info['new_name'] == '20260923_Lisa01.plt'
 
     def test_existing_number_with_extra_suffix_kept(self, tmp_path):
-        """Lisa01_1 — номер уже в базе, суффикс не трогаем."""
         info = analyze_file(touch(tmp_path / '20260923_lisa01_1.gpx'))
-        # sanitize+normalize: 'lisa01_1' → 'Lisa01_1' (только капитализация)
         assert info['has_error'] is True
         assert info['new_name'] == '20260923_Lisa01_1.gpx'
         assert info['confidence'] == 'high'
+
+    # Новые кейсы из реальной ситуации
+    def test_number_in_middle_with_sep(self, tmp_path):
+        info = analyze_file(touch(tmp_path / '20261004_Lisa_03_Test.gpx'))
+        assert info['has_error'] is True
+        assert info['new_name'] == '20261004_Lisa03_Test.gpx'
+        assert info['confidence'] == 'high'
+
+    def test_number_in_middle_with_suffix_number(self, tmp_path):
+        info = analyze_file(touch(tmp_path / '20261004_Lisa_04_1.gpx'))
+        assert info['has_error'] is True
+        assert info['new_name'] == '20261004_Lisa04_1.gpx'
+        assert info['confidence'] == 'high'
+
+    def test_number_in_middle_hyphen(self, tmp_path):
+        info = analyze_file(touch(tmp_path / '20261004_Lisa-05-Test.gpx'))
+        assert info['has_error'] is True
+        assert info['new_name'] == '20261004_Lisa05-Test.gpx'
 
     @pytest.mark.translit
     def test_callsign_unfixable(self, tmp_path):

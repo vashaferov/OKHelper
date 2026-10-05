@@ -24,12 +24,16 @@ _PALETTE_DARK = {
     'tree.file':          '#ffffff',
     'tree.err':           'bold #ff5f5f',
     'tree.sel':           'reverse',
+    'tree.uploaded':      'bold #5fd75f',
 
     'btn':                'bold #000000 bg:#87d787',
     'btn.med':            'bold #000000 bg:#ffd700',
     'btn.warn':           'bold #000000 bg:#ff8700',
     'btn.ftp':            'bold #000000 bg:#5fd7ff',
     'btn.del':            'bold #ffffff bg:#af0000',
+    'btn.new':            'bold #ffffff bg:#875faf',
+    'btn.move':           'bold #000000 bg:#ffaf5f',
+    'btn.refresh':        'bold #000000 bg:#5fd7ff',
     'btn.dis':            '#808080',
 
     'dim':                '#808080',
@@ -66,9 +70,14 @@ _PALETTE_DARK = {
     'log.tag.open':       '#5fd7ff',
     'log.tag.undo':       'bold #ffd700',
     'log.tag.translit':   '#ffffff',
+    'log.tag.copy':       '#5fd7ff',
 
     'tab.active':         'bold #000000 bg:#ff8700',
     'tab.inactive':       '#a8a8a8 bg:#2d2d2d',
+
+    'scrollbar.background': '#3a3a3a',
+    'scrollbar.button':     '#ff8700',
+    'scrollbar.arrow':      'bg:#3a3a3a #a8a8a8',
 }
 
 
@@ -83,12 +92,16 @@ _PALETTE_LIGHT = {
     'tree.file':          '#000000',
     'tree.err':           'bold #d70000',
     'tree.sel':           'reverse',
+    'tree.uploaded':      'bold #008700',
 
     'btn':                'bold #ffffff bg:#5faf5f',
     'btn.med':            'bold #000000 bg:#d7af00',
     'btn.warn':           'bold #ffffff bg:#d75f00',
     'btn.ftp':            'bold #ffffff bg:#0087af',
     'btn.del':            'bold #ffffff bg:#d70000',
+    'btn.new':            'bold #ffffff bg:#5f0087',
+    'btn.move':           'bold #000000 bg:#d78700',
+    'btn.refresh':        'bold #ffffff bg:#0087af',
     'btn.dis':            '#808080',
 
     'dim':                '#585858',
@@ -125,9 +138,14 @@ _PALETTE_LIGHT = {
     'log.tag.open':       '#0087af',
     'log.tag.undo':       'bold #875f00',
     'log.tag.translit':   '#000000',
+    'log.tag.copy':       '#0087af',
 
     'tab.active':         'bold #ffffff bg:#d75f00',
     'tab.inactive':       '#585858 bg:#f0f0f0',
+
+    'scrollbar.background': '#d0d0d0',
+    'scrollbar.button':     '#d75f00',
+    'scrollbar.arrow':      'bg:#d0d0d0 #585858',
 }
 
 
