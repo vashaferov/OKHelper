@@ -12,9 +12,6 @@ env:
   PYTHONIOENCODING: "utf-8"
 
 jobs:
-  # ──────────────────────────────────────────────────────────────
-  # 1. Тесты: pytest с Allure-отчётом на Linux и Windows
-  # ──────────────────────────────────────────────────────────────
   test:
     name: Тесты (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
@@ -26,15 +23,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Настройка Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Кэш pip
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements*.txt') }}
@@ -52,27 +49,24 @@ jobs:
 
       - name: Сохранить сырые результаты Allure
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: allure-results-${{ matrix.os }}-py${{ matrix.python-version }}
           path: allure-results/
           retention-days: 7
           if-no-files-found: ignore
 
-  # ──────────────────────────────────────────────────────────────
-  # 2. Сборка Allure-отчёта. Зависит от job'а тестов, но выполняется
-  #    даже если тесты упали (if: always()), чтобы можно было
-  #    посмотреть причину падения в человекочитаемом виде.
-  # ──────────────────────────────────────────────────────────────
   allure-report:
     name: Allure-отчёт
     needs: test
     if: always()
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Скачать все allure-results
         uses: actions/download-artifact@v5
@@ -94,24 +88,14 @@ jobs:
       - name: Генерация HTML-отчёта
         run: allure generate allure-results --clean -o allure-report
 
-      - name: История отчётов (сохранение между запусками)
-        uses: actions/checkout@v6
-        if: always()
-        continue-on-error: true
-        with:
-          ref: gh-pages
-          path: gh-pages
-
       - name: Загрузка HTML-отчёта как артефакта
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: allure-report
           path: allure-report/
           retention-days: 30
           if-no-files-found: error
 
-      # Публикуем отчёт на GitHub Pages в ветке gh-pages.
-      # Первый запуск создаст ветку автоматически.
       - name: Публикация на GitHub Pages
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         uses: peaceiris/actions-gh-pages@v4
@@ -122,21 +106,18 @@ jobs:
           keep_files: true
           commit_message: 'Allure report: ${{ github.sha }}'
 
-  # ──────────────────────────────────────────────────────────────
-  # 3. Сборка портативной версии для Windows (PyInstaller --onefile)
-  # ──────────────────────────────────────────────────────────────
-  build:
-    name: Сборка (Windows)
+  build-windows:
+    name: Сборка Windows .exe
     needs: test
     if: success()
     runs-on: windows-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Настройка Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
@@ -146,19 +127,19 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Сборка onefile-бинарника
-        run: pyinstaller --onefile --console --name ok-helper-tui main.py
+      - name: Сборка onefile GUI-бинарника
+        run: pyinstaller --onefile --windowed --name ok-helper main.py
 
       - name: Проверка, что бинарник существует
         shell: bash
         run: |
           ls -la dist/
-          test -f "dist/ok-helper-tui.exe"
+          test -f "dist/ok-helper.exe"
 
       - name: Загрузка артефакта
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
-          name: ok-helper-tui-windows
-          path: dist/ok-helper-tui.exe
+          name: ok-helper-windows
+          path: dist/ok-helper.exe
           if-no-files-found: error
           retention-days: 30

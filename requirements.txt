@@ -1,2 +1,2 @@
-prompt_toolkit>=3.0.0
 watchdog>=3.0.0
+PySide6>=6.6.0

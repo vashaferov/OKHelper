@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
-"""Точка входа ok-helper-tui."""
+"""Точка входа ok-helper.
+
+GUI-версия на PySide6 (Qt 6). Только Windows.
+
+Требуется пакет PySide6 — устанавливается через requirements.txt.
+"""
 
 import argparse
-import asyncio
 import sys
 from pathlib import Path
 
 from config import load_config, config_path
-from ok_helper.app import run
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='ok-helper-tui: транслит + умная проверка имён файлов.')
+        description='ok-helper: транслит и умная проверка имён файлов.')
     parser.add_argument(
         'directory', nargs='?', default=None,
         help='Начальная директория. Если не задана — берётся из конфига.',
@@ -32,9 +35,15 @@ def main():
         sys.exit(1)
 
     try:
-        asyncio.run(run(d, config))
-    except KeyboardInterrupt:
-        pass
+        import PySide6  # noqa: F401
+    except ImportError:
+        print('PySide6 не установлен.', file=sys.stderr)
+        print('Установите зависимости:', file=sys.stderr)
+        print('  pip install -r requirements.txt', file=sys.stderr)
+        sys.exit(1)
+
+    from ok_helper.gui import run_gui
+    run_gui(d, config)
 
 
 if __name__ == '__main__':
