@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
+    tags: [ 'v*' ]          # ← запускает workflow при пуше тега v1.0.0 и т.п.
   pull_request:
     branches: [ main, master ]
   workflow_dispatch:
@@ -112,6 +112,8 @@ jobs:
     needs: test
     if: success()
     runs-on: windows-latest
+    permissions:
+      contents: write        # ← нужно, чтобы softprops/action-gh-release мог создать релиз
 
     steps:
       - name: Checkout
@@ -184,34 +186,32 @@ jobs:
           cd ..
           ls -la ok-helper-windows-portable.zip
 
-      - name: Загрузка ZIP-артефакта (рекомендуемый способ)
+      # ─────────────────────────────────────────────────────────────
+      # Основной канал распространения: GitHub Release.
+      # Страница релиза публична, не требует авторизации,
+      # Chrome/Edge не блокируют скачивание ассетов релиза.
+      # Пользователю достаточно открыть:
+      #   https://github.com/<owner>/<repo>/releases/latest
+      # ─────────────────────────────────────────────────────────────
+      - name: Создать GitHub Release и прикрепить ZIP (только по тегу v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ok-helper-windows-portable.zip
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ─────────────────────────────────────────────────────────────
+      # Вспомогательный артефакт — только для мейнтейнера
+      # (Chrome блокирует скачивание артефактов напрямую,
+      #  обычным пользователям раздавайте через Release).
+      # ─────────────────────────────────────────────────────────────
+      - name: Сохранить ZIP как артефакт (для внутреннего использования)
         uses: actions/upload-artifact@v4
         with:
           name: ok-helper-windows-portable
           path: ok-helper-windows-portable.zip
           if-no-files-found: error
           retention-days: 30
-
-      # Дополнительно оставляем «сырой» exe — для тех, кто умеет его
-      # скачивать (curl, PowerShell Invoke-WebRequest, aria2c).
-      - name: Загрузка «сырого» .exe (для продвинутых)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ok-helper-windows-exe
-          path: dist/ok-helper.exe
-          if-no-files-found: error
-          retention-days: 30
-
-      # При пуше тега вида v1.0.0 — публикуем портативный ZIP в релиз
-      # GitHub. Chrome не блокирует скачивание ассетов релиза как
-      # «dangerous file» — блокировка идёт только на артефакты через
-      # /actions/runs/.../artifacts/...
-      - name: Публикация в GitHub Release (только по тегу)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ok-helper-windows-portable.zip
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
