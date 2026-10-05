@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [windows-latest]
         python-version: ['3.11', '3.12']
 
     steps:
@@ -136,10 +136,81 @@ jobs:
           ls -la dist/
           test -f "dist/ok-helper.exe"
 
-      - name: Загрузка артефакта
+      # Формируем портативный ZIP: exe + README с инструкцией по
+      # разблокировке. Именно этот файл пользователь скачивает —
+      # Chrome/Edge ZIP не блокируют.
+      - name: Подготовка портативного пакета
+        shell: bash
+        run: |
+          mkdir -p portable
+          cp dist/ok-helper.exe portable/
+          cat > portable/README.txt <<'EOF'
+          ok-helper — портативная сборка для Windows
+          =========================================
+
+          Как запустить
+          -------------
+          1. Распакуйте архив в любую папку (например, C:\Tools\ok-helper).
+          2. При первом запуске Windows может показать окно
+             «Windows защитила ваш компьютер» (SmartScreen) — это
+             стандартная защита для неподписанных .exe. Нажмите:
+                 Подробнее → Выполнить в любом случае.
+          3. Приложение запустится. Конфиг создастся автоматически в
+             %APPDATA%\ok-helper\config.toml.
+
+          Альтернативный способ разблокировки (если SmartScreen не
+          показывает кнопку «Выполнить в любом случае»)
+          ------------------------------------------------------
+          • Правый клик по ok-helper.exe → Свойства.
+          • Внизу вкладки «Общие» поставьте галочку «Разблокировать»
+            (Unblock) → ОК.
+          • Запустите файл обычным двойным кликом.
+
+          Или одной командой в PowerShell (в папке с exe):
+              Unblock-File .\ok-helper.exe
+
+          Требования
+          ----------
+          • Windows 10 или новее (x64).
+          • Python устанавливать не нужно — всё в одном .exe.
+          EOF
+
+      - name: Упаковка портативного ZIP
+        shell: bash
+        run: |
+          cd portable
+          7z a -tzip ../ok-helper-windows-portable.zip ./*
+          cd ..
+          ls -la ok-helper-windows-portable.zip
+
+      - name: Загрузка ZIP-артефакта (рекомендуемый способ)
         uses: actions/upload-artifact@v4
         with:
-          name: ok-helper-windows
+          name: ok-helper-windows-portable
+          path: ok-helper-windows-portable.zip
+          if-no-files-found: error
+          retention-days: 30
+
+      # Дополнительно оставляем «сырой» exe — для тех, кто умеет его
+      # скачивать (curl, PowerShell Invoke-WebRequest, aria2c).
+      - name: Загрузка «сырого» .exe (для продвинутых)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ok-helper-windows-exe
           path: dist/ok-helper.exe
           if-no-files-found: error
           retention-days: 30
+
+      # При пуше тега вида v1.0.0 — публикуем портативный ZIP в релиз
+      # GitHub. Chrome не блокирует скачивание ассетов релиза как
+      # «dangerous file» — блокировка идёт только на артефакты через
+      # /actions/runs/.../artifacts/...
+      - name: Публикация в GitHub Release (только по тегу)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ok-helper-windows-portable.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
